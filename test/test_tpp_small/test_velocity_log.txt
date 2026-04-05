@@ -1,0 +1,447 @@
+Reading from the hdf5 files
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5D.c line 474 in H5Dclose(): can't decrement count on dataset ID
+    major: Dataset
+    minor: Unable to decrement reference count
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1192 in H5I_dec_app_ref_always_close(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1162 in H5I__dec_app_ref_always_close(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 913 in H5I_remove(): can't remove ID node
+    major: Object ID
+    minor: Can't delete message
+  #004: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 864 in H5I__remove_common(): can't remove ID node from hash table
+    major: Object ID
+    minor: Can't delete message
+  #005: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #006: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5F.c line 1047 in H5Fclose(): decrementing file ID failed
+    major: File accessibility
+    minor: Unable to close file
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1087 in H5I_dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5P.c line 1468 in H5Pclose(): can't close
+    major: Property lists
+    minor: Unable to free object
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1087 in H5I_dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5D.c line 474 in H5Dclose(): can't decrement count on dataset ID
+    major: Dataset
+    minor: Unable to decrement reference count
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1192 in H5I_dec_app_ref_always_close(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1162 in H5I__dec_app_ref_always_close(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 913 in H5I_remove(): can't remove ID node
+    major: Object ID
+    minor: Can't delete message
+  #004: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 864 in H5I__remove_common(): can't remove ID node from hash table
+    major: Object ID
+    minor: Can't delete message
+  #005: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #006: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5F.c line 1047 in H5Fclose(): decrementing file ID failed
+    major: File accessibility
+    minor: Unable to close file
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1087 in H5I_dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5P.c line 1468 in H5Pclose(): can't close
+    major: Property lists
+    minor: Unable to free object
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1087 in H5I_dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5D.c line 474 in H5Dclose(): can't decrement count on dataset ID
+    major: Dataset
+    minor: Unable to decrement reference count
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1192 in H5I_dec_app_ref_always_close(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1162 in H5I__dec_app_ref_always_close(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 913 in H5I_remove(): can't remove ID node
+    major: Object ID
+    minor: Can't delete message
+  #004: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 864 in H5I__remove_common(): can't remove ID node from hash table
+    major: Object ID
+    minor: Can't delete message
+  #005: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #006: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5F.c line 1047 in H5Fclose(): decrementing file ID failed
+    major: File accessibility
+    minor: Unable to close file
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1087 in H5I_dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5P.c line 1468 in H5Pclose(): can't close
+    major: Property lists
+    minor: Unable to free object
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1087 in H5I_dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5D.c line 474 in H5Dclose(): can't decrement count on dataset ID
+    major: Dataset
+    minor: Unable to decrement reference count
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1192 in H5I_dec_app_ref_always_close(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1162 in H5I__dec_app_ref_always_close(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 913 in H5I_remove(): can't remove ID node
+    major: Object ID
+    minor: Can't delete message
+  #004: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 864 in H5I__remove_common(): can't remove ID node from hash table
+    major: Object ID
+    minor: Can't delete message
+  #005: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #006: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5F.c line 1047 in H5Fclose(): decrementing file ID failed
+    major: File accessibility
+    minor: Unable to close file
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1087 in H5I_dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5P.c line 1468 in H5Pclose(): can't close
+    major: Property lists
+    minor: Unable to free object
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1087 in H5I_dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5D.c line 474 in H5Dclose(): can't decrement count on dataset ID
+    major: Dataset
+    minor: Unable to decrement reference count
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1192 in H5I_dec_app_ref_always_close(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1162 in H5I__dec_app_ref_always_close(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 913 in H5I_remove(): can't remove ID node
+    major: Object ID
+    minor: Can't delete message
+  #004: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 864 in H5I__remove_common(): can't remove ID node from hash table
+    major: Object ID
+    minor: Can't delete message
+  #005: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #006: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5F.c line 1047 in H5Fclose(): decrementing file ID failed
+    major: File accessibility
+    minor: Unable to close file
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1087 in H5I_dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5P.c line 1468 in H5Pclose(): can't close
+    major: Property lists
+    minor: Unable to free object
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1087 in H5I_dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5D.c line 474 in H5Dclose(): can't decrement count on dataset ID
+    major: Dataset
+    minor: Unable to decrement reference count
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1192 in H5I_dec_app_ref_always_close(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1162 in H5I__dec_app_ref_always_close(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 913 in H5I_remove(): can't remove ID node
+    major: Object ID
+    minor: Can't delete message
+  #004: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 864 in H5I__remove_common(): can't remove ID node from hash table
+    major: Object ID
+    minor: Can't delete message
+  #005: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #006: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5F.c line 1047 in H5Fclose(): decrementing file ID failed
+    major: File accessibility
+    minor: Unable to close file
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1087 in H5I_dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5P.c line 1468 in H5Pclose(): can't close
+    major: Property lists
+    minor: Unable to free object
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1087 in H5I_dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+TOTAL KINETIC ENERGY (or Scalar SumSq): 3584
+
+Number of processors in x direction: 1
+Number of processors in y direction: 1
+
+Computing longitudinal and transverse S(lx, ly, lz) using 3D velocity field data..
+Writing 1 order to file.
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5D.c line 474 in H5Dclose(): can't decrement count on dataset ID
+    major: Dataset
+    minor: Unable to decrement reference count
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1192 in H5I_dec_app_ref_always_close(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1162 in H5I__dec_app_ref_always_close(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 913 in H5I_remove(): can't remove ID node
+    major: Object ID
+    minor: Can't delete message
+  #004: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 864 in H5I__remove_common(): can't remove ID node from hash table
+    major: Object ID
+    minor: Can't delete message
+  #005: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #006: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+Writing 2 order to file.
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5D.c line 474 in H5Dclose(): can't decrement count on dataset ID
+    major: Dataset
+    minor: Unable to decrement reference count
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1192 in H5I_dec_app_ref_always_close(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1162 in H5I__dec_app_ref_always_close(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 913 in H5I_remove(): can't remove ID node
+    major: Object ID
+    minor: Can't delete message
+  #004: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 864 in H5I__remove_common(): can't remove ID node from hash table
+    major: Object ID
+    minor: Can't delete message
+  #005: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #006: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5F.c line 1047 in H5Fclose(): decrementing file ID failed
+    major: File accessibility
+    minor: Unable to close file
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1087 in H5I_dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5P.c line 1468 in H5Pclose(): can't close
+    major: Property lists
+    minor: Unable to free object
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1087 in H5I_dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+Writing 1 order to file.
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5D.c line 474 in H5Dclose(): can't decrement count on dataset ID
+    major: Dataset
+    minor: Unable to decrement reference count
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1192 in H5I_dec_app_ref_always_close(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1162 in H5I__dec_app_ref_always_close(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 913 in H5I_remove(): can't remove ID node
+    major: Object ID
+    minor: Can't delete message
+  #004: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 864 in H5I__remove_common(): can't remove ID node from hash table
+    major: Object ID
+    minor: Can't delete message
+  #005: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #006: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+Writing 2 order to file.
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5D.c line 474 in H5Dclose(): can't decrement count on dataset ID
+    major: Dataset
+    minor: Unable to decrement reference count
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1192 in H5I_dec_app_ref_always_close(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1162 in H5I__dec_app_ref_always_close(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 913 in H5I_remove(): can't remove ID node
+    major: Object ID
+    minor: Can't delete message
+  #004: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 864 in H5I__remove_common(): can't remove ID node from hash table
+    major: Object ID
+    minor: Can't delete message
+  #005: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #006: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+
+Writing completed
+
+Time elapsed for the parallel part: 0.001037HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5F.c line 1047 in H5Fclose(): decrementing file ID failed
+    major: File accessibility
+    minor: Unable to close file
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1087 in H5I_dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+HDF5-DIAG: Error detected in HDF5 (1.14.6) MPI-process 0:
+  #000: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5P.c line 1468 in H5Pclose(): can't close
+    major: Property lists
+    minor: Unable to free object
+  #001: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1087 in H5I_dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #002: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 1042 in H5I__dec_app_ref(): can't decrement ID ref count
+    major: Object ID
+    minor: Unable to decrement reference count
+  #003: /tmp/fastsf-deps/hdf5-hdf5-1.14.6/src/H5Iint.c line 948 in H5I__dec_ref(): can't locate ID
+    major: Object ID
+    minor: Unable to find ID information (already closed?)
+
+
+Total time elapsed: 0.014123
+
+Program ends.

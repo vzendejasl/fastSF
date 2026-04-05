@@ -42,20 +42,32 @@
  ############################################################################################################################################
 ##
 
+if [ "$(uname)" = "Darwin" ]; then
+    export FASTSF_SKIP_MPI_FINALIZE="${FASTSF_SKIP_MPI_FINALIZE:-1}"
+    export MPLBACKEND="${MPLBACKEND:-Agg}"
+fi
 
-cd test/test_scalar_2D
-mpirun -np 1 ../../src/fastSF.out
-cd ..
-cd test_velocity_2D
-mpirun -np 1 ../../src/fastSF.out
-cd ..
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+MPI_LAUNCHER="${MPI_LAUNCHER:-mpirun}"
+MPI_NP_FLAG="${MPI_NP_FLAG:--np}"
+MPI_NPROCS="${MPI_NPROCS:-1}"
+FASTSF_EXECUTABLE="${FASTSF_EXECUTABLE:-../../src/fastSF.out}"
 
-cd test_scalar_3D
-mpirun -np 1 ../../src/fastSF.out
-cd ..
-cd test_velocity_3D
-mpirun -np 1 ../../src/fastSF.out
-cd ../
-python test.py
+run_case() {
+    test_dir="$1"
+    cd "$test_dir"
+    "$MPI_LAUNCHER" "$MPI_NP_FLAG" "$MPI_NPROCS" "$FASTSF_EXECUTABLE"
+    cd ..
+}
 
+cd test
+run_case test_scalar_2D
+run_case test_velocity_2D
 
+run_case test_scalar_3D
+run_case test_velocity_3D
+
+echo "Running TPP format tests..."
+./test_tpp_all.sh
+
+"$PYTHON_BIN" test.py

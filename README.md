@@ -31,7 +31,6 @@ The following environment variables need to be set before compiling `fastSF`. (Y
 `export LIBRARY_PATH=$HOME/local/lib:$LIBRARY_PATH`
 
 `export MANPATH=$HOME/local/share/man/:$MANPATH`
-`
 
 ### Required Libraries
 
@@ -44,10 +43,10 @@ All array manipulations are performed using the `Blitz++` library. Download `Bli
 	
 	`make install`
 
-* [`YAML-cpp`](https://github.com/jbeder/yaml-cpp/releases/tag/release-0.3.0)(Version 0.3.0) - 
-	The input parameters are stored in the `para.yaml` file which needs the `YAML-cpp` library to parse. Download `YAML-cpp` from [here](https://github.com/jbeder/yaml-cpp/releases/tag/release-0.3.0). Extract the zip/tar file and change the `yaml-cpp-release-0.3.0` directory. Important: Please ensure that [CMake](https://cmake.org) is installed in your system. Enter the following commands:
-	
-	`CC=gcc CXX=g++ cmake -DCMAKE_INSTALL_PREFIX=$HOME/local`
+* [`YAML-cpp`](https://github.com/jbeder/yaml-cpp) - 
+		The input parameters are stored in the `para.yaml` file which needs the `YAML-cpp` library to parse. `fastSF` now builds with current `yaml-cpp` releases exposed through `pkg-config`. If you want to install it manually, download `YAML-cpp` from [here](https://github.com/jbeder/yaml-cpp). Important: Please ensure that [CMake](https://cmake.org) is installed in your system. Enter the following commands:
+		
+		`CC=gcc CXX=g++ cmake -DCMAKE_INSTALL_PREFIX=$HOME/local`
 	
 	`make install`
 
@@ -76,21 +75,42 @@ This library is used for simplifying the input-output operations of `HDF5`. Down
 	`make install`
 
 
-IMPORTANT: 
-
-* Note that `fastSF` is not compatible with higher versions `YAML-cpp`(> 0.3.0). 
-
-
 ###  Compiling instruction
 
 After downloading `fastSF`, change into `fastSF/src` directory and run the command `make` in the terminal. An executable named `fastSF.out` will be created inside the `fastSF/src` folder.
 
+The Makefile is environment-driven and works well on Linux clusters and supercomputers where MPI and libraries are provided by modules. Common examples are:
+
+`make MPICXX=mpicxx`
+
+`make MPICXX=mpicxx PREFIX=$HOME/local`
+
+`make MPICXX=mpicxx H5SI_ROOT=$HOME/local HDF5_ROOT=$HOME/local`
+
+If your site installs `yaml-cpp` and `blitz` in a non-standard `pkg-config` location, export `PKG_CONFIG_PATH` before building.
+
+### Linux and HPC Notes
+
+On Linux and HPC systems, a typical workflow is:
+
+1. Load site modules for MPI and any packaged libraries such as `hdf5`, `yaml-cpp`, and `blitz`.
+2. Ensure `pkg-config` can see `yaml-cpp` and `blitz`.
+3. Build with the MPI wrapper used on the target machine, for example `make MPICXX=mpicxx`.
+
+If `h5si` and parallel `hdf5` are installed under a user prefix, point the Makefile at them explicitly using `H5SI_ROOT` and `HDF5_ROOT`. This avoids hardcoding macOS-specific paths and maps cleanly to cluster environments.
+
 ## Testing `fastSF`
-`fastSF` offers an automated testing process to validate the code. The relevant test scripts can be found in the `tests/` folder of the code. To execute the tesing process, change into `fastSF` and run the command 
+`fastSF` offers an automated testing process to validate the code. The relevant test scripts can be found in the `test/` folder of the code. To execute the tesing process, change into `fastSF` and run the command 
 
 `bash runTest.sh`. 
 
 The code then runs four test cases; these are as follows. 
+
+The test runner accepts a few useful overrides for Linux and scheduler-driven systems:
+
+`MPI_LAUNCHER=srun MPI_NP_FLAG=-n MPI_NPROCS=1 bash runTest.sh`
+
+`PYTHON_BIN=python3 bash runTest.sh`
 
 * In the first case, the code will generate a 2D velocity field given by **u** = [*x, z*], and compute the structure functions for the given field. For this case, the longitudinal structure functions should equal *l<sup>q</sup>*. 
 
@@ -238,7 +258,17 @@ In this case, the number of processors in the x-direction and the longitudinal s
 
 **Note:** `Nx`, `Ny`, and `Nz` should be specified only if test case is "on", in which case the code generates the input fields.
 
-### iv) Output Information
+### iv) Streamlined Running for TPP Format
+
+`fastSF` now supports smart defaults for the `turbulence_post_process` (TPP) format. If all your velocity components are in a single HDF5 file with standard names (`fields/vx`, `fields/vy`, `fields/vz`), you only need to provide the file name once:
+
+`mpirun -np [N] src/fastSF.out -U [FileName]`
+
+Similarly for scalar fields in TPP format (expected dataset `fields/temp`):
+
+`mpirun -np [N] src/fastSF.out -s true -Q [FileName]`
+
+### v) Output Information
 
 Unless specified otherwise by the user via command-line arguments, the following output files are written by `fastSF`.
 
@@ -292,4 +322,3 @@ If you find a bug in the or errors in the documentation, please open a [new issu
 ## License
 
 `fastSF` is released under the terms of BSD New License.
-

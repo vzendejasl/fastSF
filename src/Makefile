@@ -40,6 +40,31 @@
  ############################################################################################################################################
 ##
 
+MPICXX ?= mpic++
+PKG_CONFIG ?= pkg-config
+PKG_PACKAGES ?= yaml-cpp blitz
+PREFIX ?=
+H5SI_ROOT ?= $(PREFIX)
+HDF5_ROOT ?= $(PREFIX)
+CPPFLAGS += $(shell $(PKG_CONFIG) --cflags $(PKG_PACKAGES) 2>/dev/null)
+LDLIBS += $(shell $(PKG_CONFIG) --libs $(PKG_PACKAGES) 2>/dev/null)
+CXXFLAGS ?= -std=c++11 -O3 -DH5SI_ENABLE_MPI -DH5SI_ENABLE_MPI
+
+ifneq ($(strip $(H5SI_ROOT)),)
+CPPFLAGS += -I$(H5SI_ROOT)/include
+LDFLAGS += -L$(H5SI_ROOT)/lib
+RPATH_DIRS += $(H5SI_ROOT)/lib
+endif
+
+ifneq ($(strip $(HDF5_ROOT)),)
+CPPFLAGS += -I$(HDF5_ROOT)/include
+LDFLAGS += -L$(HDF5_ROOT)/lib
+RPATH_DIRS += $(HDF5_ROOT)/lib
+endif
+
+RPATH_FLAGS := $(foreach dir,$(sort $(RPATH_DIRS)),-Wl,-rpath,$(dir))
+LDLIBS += -lh5si -lhdf5
+
 Structure: fastSF.cc
-	mpic++ -std=c++11 fastSF.cc -O3 `pkg-config --cflags --libs yaml-cpp blitz` -lh5si -lhdf5 -o fastSF.out
+	$(MPICXX) $(CXXFLAGS) $(CPPFLAGS) fastSF.cc $(LDFLAGS) $(RPATH_FLAGS) $(LDLIBS) -o fastSF.out
 	#mpic++ fastSF.cc -fstack-protector -O3 -lh5si -lhdf5 -lyaml-cpp -o fastSF.out
