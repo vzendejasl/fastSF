@@ -8,6 +8,7 @@
  */
 
 #include "h5si.h"
+#include "input_utils.h"
 #include <yaml-cpp/yaml.h>
 #include <iostream>
 #include <fstream>
@@ -19,32 +20,20 @@
 #include <limits.h>
 #include <unistd.h>
 #include <vector>
+#include <set>
 #include <cstdio>
 #include <cstdlib>
+#include <cmath>
+#include <stdexcept>
 #include <sys/stat.h>
 
 using namespace std;
 using namespace blitz;
 
-//Chunk structure to store byte offset and row count
-struct Chunk {
-    std::streampos offset;
-    long count;
-};
-
-struct ParsedData {
-    std::vector<double> v1;
-};
-
 //Function declarations
 void get_Inputs(int argc, char* argv[]); 
 void ComputeAndPrintTKE();
 void DumpFieldsToTxt();
-std::vector<Chunk> build_chunk_index(string txt_path, int skip_count);
-ParsedData read_chunk_at_offset(string txt_path, std::streampos offset, long count, bool isScalar);
-void write_to_structured_h5(string h5_path, string dset_name, const std::vector<double>& v, int nx, int ny, int nz);
-void verify_and_cleanup(string txt_path, string h5_path, string dset_name, double original_tke, long original_rows);
-bool CheckAndConvert(string fold, string& filename, string& datasetname, bool isScalar);
 void write_3D(Array<double,3>, string);
 void write_4D(Array<double,4>, string);
 void read_2D(Array<double,2>, string, string, string);
@@ -81,6 +70,33 @@ void help_command();
 void get_rank(int rank, int py, int& rankx, int& ranky);
 void compute_index_list(Array<int,1>& index_list, int Nx, int px, int rank);
 void compute_index_list(Array<int,3>& index_list, int Nx, int Ny);
+void abort_with_error(const string& message);
+void abort_parallel_conversion(const string& message);
+void prepare_input_sources();
+void prepare_scalar_input();
+void prepare_velocity_inputs();
+void convert_velocity_txt_to_structured_h5(const string& txt_path, const string& h5_path);
+void convert_scalar_txt_to_structured_h5(const string& txt_path, const string& h5_path, const string& field_path);
+bool load_structured_grid_spacing(const string& h5_path);
+bool h5_path_exists(hid_t object_id, const string& path);
+bool is_structured_velocity_h5(const string& h5_path);
+bool is_structured_scalar_h5(const string& h5_path, string& field_path);
+void write_string_attribute(hid_t object_id, const string& name, const string& value);
+void write_int_attribute(hid_t object_id, const string& name, int value);
+void write_double_attribute(hid_t object_id, const string& name, double value);
+void write_double_dataset_1d(hid_t file_id, const string& dataset_path, const std::vector<double>& values);
+void write_double_dataset_3d(hid_t file_id, const string& dataset_path, const std::vector<double>& values, hsize_t nx, hsize_t ny, hsize_t nz);
+std::vector<double> read_double_dataset_1d(hid_t file_id, const string& dataset_path);
+string default_scalar_field_path();
+std::vector<std::pair<int,int> > split_axis_ranges(int length, int parts);
+void broadcast_txt_chunks(std::vector<TxtChunk>& chunks, int header_lines);
+std::vector<double> gather_unique_axis_values(const std::set<double>& local_values);
+int owner_rank_for_x_index(int ix, const std::vector<std::pair<int,int> >& x_ranges);
+void write_parallel_velocity_h5(const string& h5_path, const StructuredGridInfo& grid, int x_start, int x_stop, const std::vector<double>& local_vx, const std::vector<double>& local_vy, const std::vector<double>& local_vz);
+void write_parallel_scalar_h5(const string& h5_path, const string& field_path, const StructuredGridInfo& grid, int x_start, int x_stop, const std::vector<double>& local_field);
+bool axis_has_periodic_duplicate(const std::vector<double>& axis, double domain_length);
+std::vector<double> trim_periodic_axis(const std::vector<double>& axis, double domain_length);
+bool read_bool_attribute(hid_t object_id, const std::string& name, bool default_value);
 
 // Global variables
 Array <double,3> T, V1, V2, V3;
@@ -148,6 +164,756 @@ void calculate_grid_spacing(){
     dz = (Nz<=1) ? 0 : Lz/double(Nz-1);
 }
 
+void abort_with_error(const string& message) {
+    if (rank_mpi == 0) cerr << message << endl;
+    h5::finalize();
+    finalize_mpi_runtime();
+    exit(1);
+}
+
+void abort_parallel_conversion(const string& message) {
+    if (rank_mpi == 0) cerr << message << endl;
+    MPI_Abort(MPI_COMM_WORLD, 1);
+}
+
+bool h5_path_exists(hid_t object_id, const string& path) {
+    return H5Lexists(object_id, path.c_str(), H5P_DEFAULT) > 0;
+}
+
+void write_string_attribute(hid_t object_id, const string& name, const string& value) {
+    hid_t type_id = H5Tcopy(H5T_C_S1);
+    H5Tset_size(type_id, value.size());
+    hid_t space_id = H5Screate(H5S_SCALAR);
+    hid_t attr_id = H5Acreate2(object_id, name.c_str(), type_id, space_id, H5P_DEFAULT, H5P_DEFAULT);
+    H5Awrite(attr_id, type_id, value.c_str());
+    H5Aclose(attr_id);
+    H5Sclose(space_id);
+    H5Tclose(type_id);
+}
+
+void write_int_attribute(hid_t object_id, const string& name, int value) {
+    hid_t space_id = H5Screate(H5S_SCALAR);
+    hid_t attr_id = H5Acreate2(object_id, name.c_str(), H5T_NATIVE_INT, space_id, H5P_DEFAULT, H5P_DEFAULT);
+    H5Awrite(attr_id, H5T_NATIVE_INT, &value);
+    H5Aclose(attr_id);
+    H5Sclose(space_id);
+}
+
+void write_double_attribute(hid_t object_id, const string& name, double value) {
+    hid_t space_id = H5Screate(H5S_SCALAR);
+    hid_t attr_id = H5Acreate2(object_id, name.c_str(), H5T_NATIVE_DOUBLE, space_id, H5P_DEFAULT, H5P_DEFAULT);
+    H5Awrite(attr_id, H5T_NATIVE_DOUBLE, &value);
+    H5Aclose(attr_id);
+    H5Sclose(space_id);
+}
+
+bool read_bool_attribute(hid_t object_id, const std::string& name, bool default_value) {
+    if (H5Aexists(object_id, name.c_str()) <= 0) return default_value;
+    hid_t attr_id = H5Aopen(object_id, name.c_str(), H5P_DEFAULT);
+    unsigned char value = default_value ? 1 : 0;
+    if (H5Aread(attr_id, H5T_NATIVE_UCHAR, &value) < 0) {
+        int int_value = default_value ? 1 : 0;
+        H5Aread(attr_id, H5T_NATIVE_INT, &int_value);
+        value = static_cast<unsigned char>(int_value != 0);
+    }
+    H5Aclose(attr_id);
+    return value != 0;
+}
+
+void write_double_dataset_1d(hid_t file_id, const string& dataset_path, const std::vector<double>& values) {
+    hsize_t dims[1] = {static_cast<hsize_t>(values.size())};
+    hid_t space_id = H5Screate_simple(1, dims, NULL);
+    hid_t dset_id = H5Dcreate2(file_id, dataset_path.c_str(), H5T_NATIVE_DOUBLE, space_id, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    H5Dwrite(dset_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, values.empty() ? NULL : &values[0]);
+    H5Dclose(dset_id);
+    H5Sclose(space_id);
+}
+
+void write_double_dataset_3d(hid_t file_id, const string& dataset_path, const std::vector<double>& values, hsize_t nx, hsize_t ny, hsize_t nz) {
+    hsize_t dims[3] = {nx, ny, nz};
+    hid_t space_id = H5Screate_simple(3, dims, NULL);
+    hid_t dset_id = H5Dcreate2(file_id, dataset_path.c_str(), H5T_NATIVE_DOUBLE, space_id, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    H5Dwrite(dset_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, values.empty() ? NULL : &values[0]);
+    H5Dclose(dset_id);
+    H5Sclose(space_id);
+}
+
+std::vector<double> read_double_dataset_1d(hid_t file_id, const string& dataset_path) {
+    hid_t dset_id = H5Dopen2(file_id, dataset_path.c_str(), H5P_DEFAULT);
+    hid_t space_id = H5Dget_space(dset_id);
+    hsize_t dims[1] = {0};
+    H5Sget_simple_extent_dims(space_id, dims, NULL);
+    std::vector<double> values(dims[0], 0.0);
+    H5Dread(dset_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, values.empty() ? NULL : &values[0]);
+    H5Sclose(space_id);
+    H5Dclose(dset_id);
+    return values;
+}
+
+bool axis_has_periodic_duplicate(const std::vector<double>& axis, double domain_length) {
+    if (axis.size() <= 1 || domain_length <= 0) return false;
+    double spacing = axis[1] - axis[0];
+    double tol = std::max(1.0, std::abs(domain_length)) * 1.0e-8;
+    return std::abs((axis.back() - axis.front()) - domain_length) <= tol && spacing > 0;
+}
+
+std::vector<double> trim_periodic_axis(const std::vector<double>& axis, double domain_length) {
+    if (!axis_has_periodic_duplicate(axis, domain_length)) return axis;
+    return std::vector<double>(axis.begin(), axis.end() - 1);
+}
+
+bool is_structured_velocity_h5(const string& h5_path) {
+    hid_t file_id = H5Fopen(h5_path.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file_id < 0) return false;
+    bool ok = h5_path_exists(file_id, "/grid/x") && h5_path_exists(file_id, "/grid/y") && h5_path_exists(file_id, "/grid/z") &&
+        h5_path_exists(file_id, "/fields/vx") && h5_path_exists(file_id, "/fields/vy") && h5_path_exists(file_id, "/fields/vz");
+    H5Fclose(file_id);
+    return ok;
+}
+
+bool is_structured_scalar_h5(const string& h5_path, string& field_path) {
+    hid_t file_id = H5Fopen(h5_path.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file_id < 0) return false;
+    bool ok = h5_path_exists(file_id, "/grid/x") && h5_path_exists(file_id, "/grid/y") && h5_path_exists(file_id, "/grid/z") &&
+        h5_path_exists(file_id, "/fields");
+    if (!ok) {
+        H5Fclose(file_id);
+        return false;
+    }
+    hid_t fields_group = H5Gopen2(file_id, "/fields", H5P_DEFAULT);
+    hsize_t nobj = 0;
+    H5Gget_num_objs(fields_group, &nobj);
+    for (hsize_t i = 0; i < nobj; ++i) {
+        char name_buf[256];
+        ssize_t len = H5Gget_objname_by_idx(fields_group, i, name_buf, sizeof(name_buf));
+        if (len <= 0) continue;
+        string leaf(name_buf);
+        if (leaf != "vx" && leaf != "vy" && leaf != "vz") {
+            field_path = "/fields/" + leaf;
+            H5Gclose(fields_group);
+            H5Fclose(file_id);
+            return true;
+        }
+    }
+    H5Gclose(fields_group);
+    H5Fclose(file_id);
+    return false;
+}
+
+bool load_structured_grid_spacing(const string& h5_path) {
+    hid_t file_id = H5Fopen(h5_path.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file_id < 0) return false;
+    if (!(h5_path_exists(file_id, "/grid/x") && h5_path_exists(file_id, "/grid/y") && h5_path_exists(file_id, "/grid/z"))) {
+        H5Fclose(file_id);
+        return false;
+    }
+    std::vector<double> x_grid = read_double_dataset_1d(file_id, "/grid/x");
+    std::vector<double> y_grid = read_double_dataset_1d(file_id, "/grid/y");
+    std::vector<double> z_grid = read_double_dataset_1d(file_id, "/grid/z");
+    bool periodic_duplicate_last = read_bool_attribute(file_id, "periodic_duplicate_last", false);
+    H5Fclose(file_id);
+
+    if (periodic_duplicate_last) {
+        x_grid = trim_periodic_axis(x_grid, Lx);
+        y_grid = trim_periodic_axis(y_grid, Ly);
+        z_grid = trim_periodic_axis(z_grid, Lz);
+    }
+
+    Nx = static_cast<int>(x_grid.size());
+    Ny = static_cast<int>(y_grid.size());
+    Nz = static_cast<int>(z_grid.size());
+    two_dimension_switch = (Ny <= 1);
+    dx = validate_uniform_axis(x_grid, "x");
+    dy = validate_uniform_axis(y_grid, "y");
+    dz = validate_uniform_axis(z_grid, "z");
+    Lx = (x_grid.size() > 1) ? (x_grid.back() - x_grid.front()) : 0.0;
+    Ly = (y_grid.size() > 1) ? (y_grid.back() - y_grid.front()) : 0.0;
+    Lz = (z_grid.size() > 1) ? (z_grid.back() - z_grid.front()) : 0.0;
+    return true;
+}
+
+string default_scalar_field_path() {
+    string leaf = dataset_leaf_name(TdName, "temp");
+    if (leaf == "T.Fr") leaf = "temp";
+    return "fields/" + leaf;
+}
+
+std::vector<std::pair<int,int> > split_axis_ranges(int length, int parts) {
+    std::vector<std::pair<int,int> > ranges(parts);
+    int base = (parts > 0) ? (length / parts) : 0;
+    int remainder = (parts > 0) ? (length % parts) : 0;
+    int start = 0;
+    for (int rank = 0; rank < parts; ++rank) {
+        int stop = start + base + (rank < remainder ? 1 : 0);
+        ranges[rank] = std::make_pair(start, stop);
+        start = stop;
+    }
+    return ranges;
+}
+
+void broadcast_txt_chunks(std::vector<TxtChunk>& chunks, int header_lines) {
+    int chunk_count = (rank_mpi == 0) ? static_cast<int>(chunks.size()) : 0;
+    MPI_Bcast(&chunk_count, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    if (rank_mpi != 0) chunks.resize(chunk_count);
+    for (int i = 0; i < chunk_count; ++i) {
+        long long offset = (rank_mpi == 0) ? chunks[i].offset : 0;
+        long count = (rank_mpi == 0) ? chunks[i].count : 0;
+        MPI_Bcast(&offset, 1, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
+        MPI_Bcast(&count, 1, MPI_LONG, 0, MPI_COMM_WORLD);
+        if (rank_mpi != 0) {
+            chunks[i].offset = offset;
+            chunks[i].count = count;
+        }
+    }
+}
+
+std::vector<double> gather_unique_axis_values(const std::set<double>& local_values) {
+    std::vector<double> local(local_values.begin(), local_values.end());
+    int local_count = static_cast<int>(local.size());
+    std::vector<int> counts;
+    if (rank_mpi == 0) counts.resize(P, 0);
+    MPI_Gather(&local_count, 1, MPI_INT, rank_mpi == 0 ? &counts[0] : NULL, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+    std::vector<int> displs;
+    std::vector<double> gathered;
+    if (rank_mpi == 0) {
+        displs.resize(P, 0);
+        int total = 0;
+        for (int i = 0; i < P; ++i) {
+            displs[i] = total;
+            total += counts[i];
+        }
+        gathered.resize(total, 0.0);
+    }
+
+    MPI_Gatherv(local.empty() ? NULL : &local[0], local_count, MPI_DOUBLE,
+        rank_mpi == 0 && !gathered.empty() ? &gathered[0] : NULL,
+        rank_mpi == 0 ? &counts[0] : NULL,
+        rank_mpi == 0 ? &displs[0] : NULL,
+        MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+    std::vector<double> merged;
+    if (rank_mpi == 0) {
+        std::sort(gathered.begin(), gathered.end());
+        for (std::size_t i = 0; i < gathered.size(); ++i) {
+            if (merged.empty() || std::abs(gathered[i] - merged.back()) > 1.0e-12) merged.push_back(gathered[i]);
+        }
+    }
+
+    int merged_count = (rank_mpi == 0) ? static_cast<int>(merged.size()) : 0;
+    MPI_Bcast(&merged_count, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    if (rank_mpi != 0) merged.resize(merged_count, 0.0);
+    if (merged_count > 0) MPI_Bcast(&merged[0], merged_count, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    return merged;
+}
+
+int owner_rank_for_x_index(int ix, const std::vector<std::pair<int,int> >& x_ranges) {
+    for (int rank = 0; rank < static_cast<int>(x_ranges.size()); ++rank) {
+        if (ix >= x_ranges[rank].first && ix < x_ranges[rank].second) return rank;
+    }
+    return static_cast<int>(x_ranges.size()) - 1;
+}
+
+void write_parallel_velocity_h5(const string& h5_path, const StructuredGridInfo& grid, int x_start, int x_stop, const std::vector<double>& local_vx, const std::vector<double>& local_vy, const std::vector<double>& local_vz) {
+    hid_t fapl_id = H5Pcreate(H5P_FILE_ACCESS);
+    H5Pset_fapl_mpio(fapl_id, MPI_COMM_WORLD, MPI_INFO_NULL);
+    hid_t file_id = H5Fcreate(h5_path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, fapl_id);
+    H5Pclose(fapl_id);
+
+    hid_t fields_group = H5Gcreate2(file_id, "/fields", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    H5Gclose(fields_group);
+
+    hsize_t dims[3] = {static_cast<hsize_t>(grid.x.size()), static_cast<hsize_t>(grid.y.size()), static_cast<hsize_t>(grid.z.size())};
+    hid_t file_space = H5Screate_simple(3, dims, NULL);
+    hid_t vx_dset = H5Dcreate2(file_id, "/fields/vx", H5T_NATIVE_DOUBLE, file_space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    hid_t vy_dset = H5Dcreate2(file_id, "/fields/vy", H5T_NATIVE_DOUBLE, file_space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    hid_t vz_dset = H5Dcreate2(file_id, "/fields/vz", H5T_NATIVE_DOUBLE, file_space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    H5Sclose(file_space);
+
+    int local_nx = x_stop - x_start;
+    hid_t dxpl_id = H5Pcreate(H5P_DATASET_XFER);
+    H5Pset_dxpl_mpio(dxpl_id, H5FD_MPIO_COLLECTIVE);
+
+    hid_t vx_file_space = H5Dget_space(vx_dset);
+    hid_t vy_file_space = H5Dget_space(vy_dset);
+    hid_t vz_file_space = H5Dget_space(vz_dset);
+    hid_t mem_space = H5Screate(H5S_NULL);
+    if (local_nx > 0) {
+        hsize_t start[3] = {static_cast<hsize_t>(x_start), 0, 0};
+        hsize_t count[3] = {static_cast<hsize_t>(local_nx), static_cast<hsize_t>(grid.y.size()), static_cast<hsize_t>(grid.z.size())};
+        H5Sselect_hyperslab(vx_file_space, H5S_SELECT_SET, start, NULL, count, NULL);
+        H5Sselect_hyperslab(vy_file_space, H5S_SELECT_SET, start, NULL, count, NULL);
+        H5Sselect_hyperslab(vz_file_space, H5S_SELECT_SET, start, NULL, count, NULL);
+        mem_space = H5Screate_simple(3, count, NULL);
+    } else {
+        H5Sselect_none(vx_file_space);
+        H5Sselect_none(vy_file_space);
+        H5Sselect_none(vz_file_space);
+    }
+
+    H5Dwrite(vx_dset, H5T_NATIVE_DOUBLE, mem_space, vx_file_space, dxpl_id, local_nx > 0 ? &local_vx[0] : NULL);
+    H5Dwrite(vy_dset, H5T_NATIVE_DOUBLE, mem_space, vy_file_space, dxpl_id, local_nx > 0 ? &local_vy[0] : NULL);
+    H5Dwrite(vz_dset, H5T_NATIVE_DOUBLE, mem_space, vz_file_space, dxpl_id, local_nx > 0 ? &local_vz[0] : NULL);
+
+    H5Sclose(mem_space);
+    H5Sclose(vx_file_space);
+    H5Sclose(vy_file_space);
+    H5Sclose(vz_file_space);
+    H5Pclose(dxpl_id);
+    H5Dclose(vx_dset);
+    H5Dclose(vy_dset);
+    H5Dclose(vz_dset);
+    H5Fclose(file_id);
+
+    MPI_Barrier(MPI_COMM_WORLD);
+    if (rank_mpi == 0) {
+        hid_t serial_file = H5Fopen(h5_path.c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
+        hid_t grid_group = H5Gcreate2(serial_file, "/grid", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        H5Gclose(grid_group);
+        write_double_dataset_1d(serial_file, "/grid/x", grid.x);
+        write_double_dataset_1d(serial_file, "/grid/y", grid.y);
+        write_double_dataset_1d(serial_file, "/grid/z", grid.z);
+        write_string_attribute(serial_file, "schema", "structured_velocity_v1");
+        write_int_attribute(serial_file, "periodic_duplicate_last", 0);
+        write_int_attribute(serial_file, "Nx", static_cast<int>(grid.x.size()));
+        write_int_attribute(serial_file, "Ny", static_cast<int>(grid.y.size()));
+        write_int_attribute(serial_file, "Nz", static_cast<int>(grid.z.size()));
+        write_int_attribute(serial_file, "fft_nx", static_cast<int>(grid.x.size()));
+        write_int_attribute(serial_file, "fft_ny", static_cast<int>(grid.y.size()));
+        write_int_attribute(serial_file, "fft_nz", static_cast<int>(grid.z.size()));
+        write_double_attribute(serial_file, "dx", grid.dx);
+        write_double_attribute(serial_file, "dy", grid.dy);
+        write_double_attribute(serial_file, "dz", grid.dz);
+        H5Fclose(serial_file);
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
+}
+
+void write_parallel_scalar_h5(const string& h5_path, const string& field_path, const StructuredGridInfo& grid, int x_start, int x_stop, const std::vector<double>& local_field) {
+    string dataset_path = "/" + field_path;
+    hid_t fapl_id = H5Pcreate(H5P_FILE_ACCESS);
+    H5Pset_fapl_mpio(fapl_id, MPI_COMM_WORLD, MPI_INFO_NULL);
+    hid_t file_id = H5Fcreate(h5_path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, fapl_id);
+    H5Pclose(fapl_id);
+
+    hid_t fields_group = H5Gcreate2(file_id, "/fields", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    H5Gclose(fields_group);
+
+    hsize_t dims[3] = {static_cast<hsize_t>(grid.x.size()), static_cast<hsize_t>(grid.y.size()), static_cast<hsize_t>(grid.z.size())};
+    hid_t file_space = H5Screate_simple(3, dims, NULL);
+    hid_t field_dset = H5Dcreate2(file_id, dataset_path.c_str(), H5T_NATIVE_DOUBLE, file_space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    H5Sclose(file_space);
+
+    int local_nx = x_stop - x_start;
+    hid_t dxpl_id = H5Pcreate(H5P_DATASET_XFER);
+    H5Pset_dxpl_mpio(dxpl_id, H5FD_MPIO_COLLECTIVE);
+
+    hid_t field_file_space = H5Dget_space(field_dset);
+    hid_t mem_space = H5Screate(H5S_NULL);
+    if (local_nx > 0) {
+        hsize_t start[3] = {static_cast<hsize_t>(x_start), 0, 0};
+        hsize_t count[3] = {static_cast<hsize_t>(local_nx), static_cast<hsize_t>(grid.y.size()), static_cast<hsize_t>(grid.z.size())};
+        H5Sselect_hyperslab(field_file_space, H5S_SELECT_SET, start, NULL, count, NULL);
+        mem_space = H5Screate_simple(3, count, NULL);
+    } else {
+        H5Sselect_none(field_file_space);
+    }
+
+    H5Dwrite(field_dset, H5T_NATIVE_DOUBLE, mem_space, field_file_space, dxpl_id, local_nx > 0 ? &local_field[0] : NULL);
+
+    H5Sclose(mem_space);
+    H5Sclose(field_file_space);
+    H5Pclose(dxpl_id);
+    H5Dclose(field_dset);
+    H5Fclose(file_id);
+
+    MPI_Barrier(MPI_COMM_WORLD);
+    if (rank_mpi == 0) {
+        hid_t serial_file = H5Fopen(h5_path.c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
+        hid_t grid_group = H5Gcreate2(serial_file, "/grid", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        H5Gclose(grid_group);
+        write_double_dataset_1d(serial_file, "/grid/x", grid.x);
+        write_double_dataset_1d(serial_file, "/grid/y", grid.y);
+        write_double_dataset_1d(serial_file, "/grid/z", grid.z);
+        write_string_attribute(serial_file, "schema", "structured_scalar_v1");
+        write_int_attribute(serial_file, "periodic_duplicate_last", 0);
+        write_int_attribute(serial_file, "Nx", static_cast<int>(grid.x.size()));
+        write_int_attribute(serial_file, "Ny", static_cast<int>(grid.y.size()));
+        write_int_attribute(serial_file, "Nz", static_cast<int>(grid.z.size()));
+        write_int_attribute(serial_file, "fft_nx", static_cast<int>(grid.x.size()));
+        write_int_attribute(serial_file, "fft_ny", static_cast<int>(grid.y.size()));
+        write_int_attribute(serial_file, "fft_nz", static_cast<int>(grid.z.size()));
+        write_double_attribute(serial_file, "dx", grid.dx);
+        write_double_attribute(serial_file, "dy", grid.dy);
+        write_double_attribute(serial_file, "dz", grid.dz);
+        H5Fclose(serial_file);
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
+}
+
+void convert_velocity_txt_to_structured_h5(const string& txt_path, const string& h5_path) {
+    if (rank_mpi == 0) cout << "Detected TXT: " << txt_path << ". Converting to HDF5..." << endl;
+
+    int header_lines = 0;
+    std::vector<TxtChunk> chunks;
+    if (rank_mpi == 0) {
+        try {
+            std::pair<std::vector<std::string>, int> header = detect_txt_header(txt_path);
+            header_lines = header.second;
+            chunks = build_txt_chunk_index(txt_path, header_lines);
+            if (chunks.empty()) abort_parallel_conversion("No sampled-data rows found in '" + txt_path + "'");
+        } catch (const std::exception& err) {
+            abort_parallel_conversion(err.what());
+        }
+    }
+    MPI_Bcast(&header_lines, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    broadcast_txt_chunks(chunks, header_lines);
+
+    std::set<double> local_x_set, local_y_set, local_z_set;
+    long local_rows = 0;
+    try {
+        for (int ci = rank_mpi; ci < static_cast<int>(chunks.size()); ci += P) {
+            SampledTxtData chunk = read_txt_chunk(txt_path, chunks[ci].offset, chunks[ci].count, false);
+            local_rows += static_cast<long>(chunk.v1.size());
+            for (std::size_t j = 0; j < chunk.x.size(); ++j) {
+                local_x_set.insert(std::round(chunk.x[j] * 1.0e10) / 1.0e10);
+                local_y_set.insert(std::round(chunk.y[j] * 1.0e10) / 1.0e10);
+                local_z_set.insert(std::round(chunk.z[j] * 1.0e10) / 1.0e10);
+            }
+        }
+    } catch (const std::exception& err) {
+        abort_parallel_conversion(err.what());
+    }
+
+    StructuredGridInfo full_grid, grid;
+    try {
+        full_grid.x = gather_unique_axis_values(local_x_set);
+        full_grid.y = gather_unique_axis_values(local_y_set);
+        full_grid.z = gather_unique_axis_values(local_z_set);
+        full_grid.dx = validate_uniform_axis(full_grid.x, "x");
+        full_grid.dy = validate_uniform_axis(full_grid.y, "y");
+        full_grid.dz = validate_uniform_axis(full_grid.z, "z");
+        grid.x = trim_periodic_axis(full_grid.x, Lx);
+        grid.y = trim_periodic_axis(full_grid.y, Ly);
+        grid.z = trim_periodic_axis(full_grid.z, Lz);
+        grid.dx = validate_uniform_axis(grid.x, "x");
+        grid.dy = validate_uniform_axis(grid.y, "y");
+        grid.dz = validate_uniform_axis(grid.z, "z");
+        if (grid.y.size() <= 1) abort_parallel_conversion("Sampled-data TXT conversion currently supports only 3D inputs");
+    } catch (const std::exception& err) {
+        abort_parallel_conversion(err.what());
+    }
+
+    long total_rows = 0;
+    MPI_Allreduce(&local_rows, &total_rows, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    long full_rows = static_cast<long>(full_grid.x.size() * full_grid.y.size() * full_grid.z.size());
+    if (full_rows != total_rows) abort_parallel_conversion("Structured grid size does not match sampled-data row count for '" + txt_path + "'");
+    long expected_rows = static_cast<long>(grid.x.size() * grid.y.size() * grid.z.size());
+    int trim_last_x = (grid.x.size() + 1 == full_grid.x.size()) ? 1 : 0;
+    int trim_last_y = (grid.y.size() + 1 == full_grid.y.size()) ? 1 : 0;
+    int trim_last_z = (grid.z.size() + 1 == full_grid.z.size()) ? 1 : 0;
+
+    std::vector<std::pair<int,int> > x_ranges = split_axis_ranges(static_cast<int>(grid.x.size()), P);
+    int x_start = x_ranges[rank_mpi].first;
+    int x_stop = x_ranges[rank_mpi].second;
+    int local_nx = x_stop - x_start;
+    int ny = static_cast<int>(grid.y.size());
+    int nz = static_cast<int>(grid.z.size());
+
+    std::vector< std::vector<double> > send_bins(P);
+    try {
+        for (int ci = rank_mpi; ci < static_cast<int>(chunks.size()); ci += P) {
+            SampledTxtData chunk = read_txt_chunk(txt_path, chunks[ci].offset, chunks[ci].count, false);
+            std::vector<int> ix = compute_axis_indices(chunk.x, full_grid.x, full_grid.dx, "x");
+            std::vector<int> iy = compute_axis_indices(chunk.y, full_grid.y, full_grid.dy, "y");
+            std::vector<int> iz = compute_axis_indices(chunk.z, full_grid.z, full_grid.dz, "z");
+            for (std::size_t row = 0; row < chunk.v1.size(); ++row) {
+                if ((trim_last_x && ix[row] == static_cast<int>(full_grid.x.size()) - 1) ||
+                    (trim_last_y && iy[row] == static_cast<int>(full_grid.y.size()) - 1) ||
+                    (trim_last_z && iz[row] == static_cast<int>(full_grid.z.size()) - 1)) continue;
+                int dest = owner_rank_for_x_index(ix[row], x_ranges);
+                send_bins[dest].push_back(static_cast<double>(ix[row]));
+                send_bins[dest].push_back(static_cast<double>(iy[row]));
+                send_bins[dest].push_back(static_cast<double>(iz[row]));
+                send_bins[dest].push_back(chunk.v1[row]);
+                send_bins[dest].push_back(chunk.v2[row]);
+                send_bins[dest].push_back(chunk.v3[row]);
+            }
+        }
+    } catch (const std::exception& err) {
+        abort_parallel_conversion(err.what());
+    }
+
+    std::vector<int> send_counts(P, 0), recv_counts(P, 0), send_displs(P, 0), recv_displs(P, 0);
+    for (int i = 0; i < P; ++i) send_counts[i] = static_cast<int>(send_bins[i].size());
+    MPI_Alltoall(&send_counts[0], 1, MPI_INT, &recv_counts[0], 1, MPI_INT, MPI_COMM_WORLD);
+    for (int i = 1; i < P; ++i) {
+        send_displs[i] = send_displs[i - 1] + send_counts[i - 1];
+        recv_displs[i] = recv_displs[i - 1] + recv_counts[i - 1];
+    }
+
+    std::vector<double> sendbuf;
+    sendbuf.reserve(send_displs[P - 1] + send_counts[P - 1]);
+    for (int i = 0; i < P; ++i) sendbuf.insert(sendbuf.end(), send_bins[i].begin(), send_bins[i].end());
+    std::vector<double> recvbuf(recv_displs[P - 1] + recv_counts[P - 1], 0.0);
+    MPI_Alltoallv(sendbuf.empty() ? NULL : &sendbuf[0], &send_counts[0], &send_displs[0], MPI_DOUBLE,
+        recvbuf.empty() ? NULL : &recvbuf[0], &recv_counts[0], &recv_displs[0], MPI_DOUBLE, MPI_COMM_WORLD);
+
+    std::vector<double> local_vx(static_cast<std::size_t>(local_nx) * ny * nz, 0.0);
+    std::vector<double> local_vy(static_cast<std::size_t>(local_nx) * ny * nz, 0.0);
+    std::vector<double> local_vz(static_cast<std::size_t>(local_nx) * ny * nz, 0.0);
+    std::vector<char> filled(static_cast<std::size_t>(local_nx) * ny * nz, 0);
+    try {
+        for (std::size_t pos = 0; pos < recvbuf.size(); pos += 6) {
+            int ix = static_cast<int>(recvbuf[pos + 0]);
+            int iy = static_cast<int>(recvbuf[pos + 1]);
+            int iz = static_cast<int>(recvbuf[pos + 2]);
+            int local_ix = ix - x_start;
+            long flat = (static_cast<long>(local_ix) * ny + iy) * nz + iz;
+            if (local_ix < 0 || local_ix >= local_nx || iy < 0 || iy >= ny || iz < 0 || iz >= nz) abort_parallel_conversion("Redistributed sampled-data row mapped out of bounds");
+            if (filled[flat]) abort_parallel_conversion("Duplicate sampled-data coordinate detected in '" + txt_path + "'");
+            filled[flat] = 1;
+            local_vx[flat] = recvbuf[pos + 3];
+            local_vy[flat] = recvbuf[pos + 4];
+            local_vz[flat] = recvbuf[pos + 5];
+        }
+    } catch (const std::exception& err) {
+        abort_parallel_conversion(err.what());
+    }
+    if (!filled.empty() && static_cast<std::size_t>(std::count(filled.begin(), filled.end(), 1)) != filled.size()) {
+        abort_parallel_conversion("Rank did not receive a complete x-slab during sampled-data redistribution");
+    }
+
+    write_parallel_velocity_h5(h5_path, grid, x_start, x_stop, local_vx, local_vy, local_vz);
+
+    if (rank_mpi == 0) {
+        hid_t verify_file = H5Fopen(h5_path.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+        hid_t verify_ds = H5Dopen2(verify_file, "/fields/vx", H5P_DEFAULT);
+        hid_t verify_space = H5Dget_space(verify_ds);
+        hsize_t dims[3] = {0, 0, 0};
+        H5Sget_simple_extent_dims(verify_space, dims, NULL);
+        H5Sclose(verify_space);
+        H5Dclose(verify_ds);
+        H5Fclose(verify_file);
+        if (static_cast<long>(dims[0] * dims[1] * dims[2]) != expected_rows) abort_parallel_conversion("Verification failed for converted HDF5 '" + h5_path + "'");
+        cout << "  SUCCESS: Conversion verified. Deleting " << txt_path << endl;
+        std::remove(txt_path.c_str());
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
+}
+
+void convert_scalar_txt_to_structured_h5(const string& txt_path, const string& h5_path, const string& field_path) {
+    if (rank_mpi == 0) cout << "Detected TXT: " << txt_path << ". Converting to HDF5..." << endl;
+
+    int header_lines = 0;
+    std::vector<TxtChunk> chunks;
+    if (rank_mpi == 0) {
+        try {
+            std::pair<std::vector<std::string>, int> header = detect_txt_header(txt_path);
+            header_lines = header.second;
+            chunks = build_txt_chunk_index(txt_path, header_lines);
+            if (chunks.empty()) abort_parallel_conversion("No sampled-data rows found in '" + txt_path + "'");
+        } catch (const std::exception& err) {
+            abort_parallel_conversion(err.what());
+        }
+    }
+    MPI_Bcast(&header_lines, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    broadcast_txt_chunks(chunks, header_lines);
+
+    std::set<double> local_x_set, local_y_set, local_z_set;
+    long local_rows = 0;
+    try {
+        for (int ci = rank_mpi; ci < static_cast<int>(chunks.size()); ci += P) {
+            SampledTxtData chunk = read_txt_chunk(txt_path, chunks[ci].offset, chunks[ci].count, true);
+            local_rows += static_cast<long>(chunk.v1.size());
+            for (std::size_t j = 0; j < chunk.x.size(); ++j) {
+                local_x_set.insert(std::round(chunk.x[j] * 1.0e10) / 1.0e10);
+                local_y_set.insert(std::round(chunk.y[j] * 1.0e10) / 1.0e10);
+                local_z_set.insert(std::round(chunk.z[j] * 1.0e10) / 1.0e10);
+            }
+        }
+    } catch (const std::exception& err) {
+        abort_parallel_conversion(err.what());
+    }
+
+    StructuredGridInfo full_grid, grid;
+    try {
+        full_grid.x = gather_unique_axis_values(local_x_set);
+        full_grid.y = gather_unique_axis_values(local_y_set);
+        full_grid.z = gather_unique_axis_values(local_z_set);
+        full_grid.dx = validate_uniform_axis(full_grid.x, "x");
+        full_grid.dy = validate_uniform_axis(full_grid.y, "y");
+        full_grid.dz = validate_uniform_axis(full_grid.z, "z");
+        grid.x = trim_periodic_axis(full_grid.x, Lx);
+        grid.y = trim_periodic_axis(full_grid.y, Ly);
+        grid.z = trim_periodic_axis(full_grid.z, Lz);
+        grid.dx = validate_uniform_axis(grid.x, "x");
+        grid.dy = validate_uniform_axis(grid.y, "y");
+        grid.dz = validate_uniform_axis(grid.z, "z");
+        if (grid.y.size() <= 1) abort_parallel_conversion("Sampled-data TXT conversion currently supports only 3D inputs");
+    } catch (const std::exception& err) {
+        abort_parallel_conversion(err.what());
+    }
+
+    long total_rows = 0;
+    MPI_Allreduce(&local_rows, &total_rows, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    long full_rows = static_cast<long>(full_grid.x.size() * full_grid.y.size() * full_grid.z.size());
+    if (full_rows != total_rows) abort_parallel_conversion("Structured grid size does not match sampled-data row count for '" + txt_path + "'");
+    long expected_rows = static_cast<long>(grid.x.size() * grid.y.size() * grid.z.size());
+    int trim_last_x = (grid.x.size() + 1 == full_grid.x.size()) ? 1 : 0;
+    int trim_last_y = (grid.y.size() + 1 == full_grid.y.size()) ? 1 : 0;
+    int trim_last_z = (grid.z.size() + 1 == full_grid.z.size()) ? 1 : 0;
+
+    std::vector<std::pair<int,int> > x_ranges = split_axis_ranges(static_cast<int>(grid.x.size()), P);
+    int x_start = x_ranges[rank_mpi].first;
+    int x_stop = x_ranges[rank_mpi].second;
+    int local_nx = x_stop - x_start;
+    int ny = static_cast<int>(grid.y.size());
+    int nz = static_cast<int>(grid.z.size());
+
+    std::vector< std::vector<double> > send_bins(P);
+    try {
+        for (int ci = rank_mpi; ci < static_cast<int>(chunks.size()); ci += P) {
+            SampledTxtData chunk = read_txt_chunk(txt_path, chunks[ci].offset, chunks[ci].count, true);
+            std::vector<int> ix = compute_axis_indices(chunk.x, full_grid.x, full_grid.dx, "x");
+            std::vector<int> iy = compute_axis_indices(chunk.y, full_grid.y, full_grid.dy, "y");
+            std::vector<int> iz = compute_axis_indices(chunk.z, full_grid.z, full_grid.dz, "z");
+            for (std::size_t row = 0; row < chunk.v1.size(); ++row) {
+                if ((trim_last_x && ix[row] == static_cast<int>(full_grid.x.size()) - 1) ||
+                    (trim_last_y && iy[row] == static_cast<int>(full_grid.y.size()) - 1) ||
+                    (trim_last_z && iz[row] == static_cast<int>(full_grid.z.size()) - 1)) continue;
+                int dest = owner_rank_for_x_index(ix[row], x_ranges);
+                send_bins[dest].push_back(static_cast<double>(ix[row]));
+                send_bins[dest].push_back(static_cast<double>(iy[row]));
+                send_bins[dest].push_back(static_cast<double>(iz[row]));
+                send_bins[dest].push_back(chunk.v1[row]);
+            }
+        }
+    } catch (const std::exception& err) {
+        abort_parallel_conversion(err.what());
+    }
+
+    std::vector<int> send_counts(P, 0), recv_counts(P, 0), send_displs(P, 0), recv_displs(P, 0);
+    for (int i = 0; i < P; ++i) send_counts[i] = static_cast<int>(send_bins[i].size());
+    MPI_Alltoall(&send_counts[0], 1, MPI_INT, &recv_counts[0], 1, MPI_INT, MPI_COMM_WORLD);
+    for (int i = 1; i < P; ++i) {
+        send_displs[i] = send_displs[i - 1] + send_counts[i - 1];
+        recv_displs[i] = recv_displs[i - 1] + recv_counts[i - 1];
+    }
+
+    std::vector<double> sendbuf;
+    sendbuf.reserve(send_displs[P - 1] + send_counts[P - 1]);
+    for (int i = 0; i < P; ++i) sendbuf.insert(sendbuf.end(), send_bins[i].begin(), send_bins[i].end());
+    std::vector<double> recvbuf(recv_displs[P - 1] + recv_counts[P - 1], 0.0);
+    MPI_Alltoallv(sendbuf.empty() ? NULL : &sendbuf[0], &send_counts[0], &send_displs[0], MPI_DOUBLE,
+        recvbuf.empty() ? NULL : &recvbuf[0], &recv_counts[0], &recv_displs[0], MPI_DOUBLE, MPI_COMM_WORLD);
+
+    std::vector<double> local_field(static_cast<std::size_t>(local_nx) * ny * nz, 0.0);
+    std::vector<char> filled(static_cast<std::size_t>(local_nx) * ny * nz, 0);
+    for (std::size_t pos = 0; pos < recvbuf.size(); pos += 4) {
+        int ix = static_cast<int>(recvbuf[pos + 0]);
+        int iy = static_cast<int>(recvbuf[pos + 1]);
+        int iz = static_cast<int>(recvbuf[pos + 2]);
+        int local_ix = ix - x_start;
+        long flat = (static_cast<long>(local_ix) * ny + iy) * nz + iz;
+        if (local_ix < 0 || local_ix >= local_nx || iy < 0 || iy >= ny || iz < 0 || iz >= nz) abort_parallel_conversion("Redistributed scalar sampled-data row mapped out of bounds");
+        if (filled[flat]) abort_parallel_conversion("Duplicate sampled-data coordinate detected in '" + txt_path + "'");
+        filled[flat] = 1;
+        local_field[flat] = recvbuf[pos + 3];
+    }
+    if (!filled.empty() && static_cast<std::size_t>(std::count(filled.begin(), filled.end(), 1)) != filled.size()) {
+        abort_parallel_conversion("Rank did not receive a complete x-slab during scalar sampled-data redistribution");
+    }
+
+    write_parallel_scalar_h5(h5_path, field_path, grid, x_start, x_stop, local_field);
+
+    if (rank_mpi == 0) {
+        hid_t verify_file = H5Fopen(h5_path.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+        hid_t verify_ds = H5Dopen2(verify_file, ("/" + field_path).c_str(), H5P_DEFAULT);
+        hid_t verify_space = H5Dget_space(verify_ds);
+        hsize_t dims[3] = {0, 0, 0};
+        H5Sget_simple_extent_dims(verify_space, dims, NULL);
+        H5Sclose(verify_space);
+        H5Dclose(verify_ds);
+        H5Fclose(verify_file);
+        if (static_cast<long>(dims[0] * dims[1] * dims[2]) != expected_rows) abort_parallel_conversion("Verification failed for converted HDF5 '" + h5_path + "'");
+        cout << "  SUCCESS: Conversion verified. Deleting " << txt_path << endl;
+        std::remove(txt_path.c_str());
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
+}
+
+void prepare_scalar_input() {
+    std::vector<std::string> search_dirs;
+    search_dirs.push_back("");
+    search_dirs.push_back("in");
+    search_dirs.push_back("data");
+    ResolvedInputPath source = resolve_input_path(TName, search_dirs);
+    if (source.extension == ".txt") {
+        string field_path = default_scalar_field_path();
+        convert_scalar_txt_to_structured_h5(source.full_path, source.path_without_extension + ".h5", field_path);
+        TName = source.path_without_extension;
+        TdName = field_path;
+        return;
+    }
+    TName = source.path_without_extension;
+    string detected_field;
+    if (is_structured_scalar_h5(source.full_path, detected_field) && TdName == "T.Fr") TdName = detected_field.substr(1);
+}
+
+void prepare_velocity_inputs() {
+    bool shared_velocity_file = (UName == VName && UName == WName);
+    if (shared_velocity_file) {
+        std::vector<std::string> search_dirs;
+        search_dirs.push_back("");
+        search_dirs.push_back("in");
+        search_dirs.push_back("data");
+        ResolvedInputPath source = resolve_input_path(UName, search_dirs);
+        if (source.extension == ".txt") {
+            convert_velocity_txt_to_structured_h5(source.full_path, source.path_without_extension + ".h5");
+            UName = source.path_without_extension;
+            VName = source.path_without_extension;
+            WName = source.path_without_extension;
+            UdName = "fields/vx";
+            VdName = "fields/vy";
+            WdName = "fields/vz";
+            return;
+        }
+        UName = source.path_without_extension;
+        VName = source.path_without_extension;
+        WName = source.path_without_extension;
+        if (is_structured_velocity_h5(source.full_path) && UdName == "U.V1r" && VdName == "U.V2r" && WdName == "U.V3r") {
+            UdName = "fields/vx";
+            VdName = "fields/vy";
+            WdName = "fields/vz";
+        }
+        return;
+    }
+
+    std::vector<std::string> search_dirs;
+    search_dirs.push_back("");
+    search_dirs.push_back("in");
+    search_dirs.push_back("data");
+    ResolvedInputPath u_source = resolve_input_path(UName, search_dirs);
+    ResolvedInputPath v_source = resolve_input_path(VName, search_dirs);
+    ResolvedInputPath w_source = resolve_input_path(WName, search_dirs);
+    if (u_source.extension == ".txt" || v_source.extension == ".txt" || w_source.extension == ".txt") {
+        throw std::runtime_error("Velocity TXT input must be provided as one sampled-data file, matching the turbulence_post_process format");
+    }
+    UName = u_source.path_without_extension;
+    VName = v_source.path_without_extension;
+    WName = w_source.path_without_extension;
+}
+
+void prepare_input_sources() {
+    try {
+        if (scalar_switch) prepare_scalar_input();
+        else prepare_velocity_inputs();
+    } catch (const std::exception& err) {
+        abort_with_error(err.what());
+    }
+}
+
 bool str_to_bool(string s){
 	if (s=="true" || s=="1") return true;
 	if (s=="false" || s=="0") return false;
@@ -160,13 +926,33 @@ void get_input_shape(string fold, string file, string dset, Array<int,1>& s){
 	s.resize(4);
 	if (f_chk.is_open()){
     	f_chk.close();
-    	h5::File f(fold+file+".h5", "r");
-    	h5::Dataset ds = f[dset];
-    	int dim = ds.shape().size();
-  		if (dim==2){ two_dimension_switch=true; Nx=ds.shape()[0]; Ny=1; Nz=ds.shape()[1]; }
-  		else { two_dimension_switch=false; Nx=ds.shape()[0]; Ny=ds.shape()[1]; Nz=ds.shape()[2]; }
-  		s(0)=dim; s(1)=Nx; s(2)=Ny; s(3)=Nz;
-        ds.close(); f.close();
+        hid_t file_id = H5Fopen((fold+file+".h5").c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+        bool structured = h5_path_exists(file_id, "/grid/x") && h5_path_exists(file_id, "/grid/y") && h5_path_exists(file_id, "/grid/z");
+        if (structured) {
+            std::vector<double> x_grid = read_double_dataset_1d(file_id, "/grid/x");
+            std::vector<double> y_grid = read_double_dataset_1d(file_id, "/grid/y");
+            std::vector<double> z_grid = read_double_dataset_1d(file_id, "/grid/z");
+            bool periodic_duplicate_last = read_bool_attribute(file_id, "periodic_duplicate_last", false);
+            if (periodic_duplicate_last) {
+                x_grid = trim_periodic_axis(x_grid, Lx);
+                y_grid = trim_periodic_axis(y_grid, Ly);
+                z_grid = trim_periodic_axis(z_grid, Lz);
+            }
+            Nx = static_cast<int>(x_grid.size());
+            Ny = static_cast<int>(y_grid.size());
+            Nz = static_cast<int>(z_grid.size());
+            two_dimension_switch = (Ny <= 1);
+            s(0)=two_dimension_switch ? 2 : 3; s(1)=Nx; s(2)=Ny; s(3)=Nz;
+        } else {
+            h5::File f(fold+file+".h5", "r");
+            h5::Dataset ds = f[dset];
+            int dim = ds.shape().size();
+            if (dim==2){ two_dimension_switch=true; Nx=ds.shape()[0]; Ny=1; Nz=ds.shape()[1]; }
+            else if (dim==3 && ds.shape()[1] == 1) { two_dimension_switch=true; Nx=ds.shape()[0]; Ny=1; Nz=ds.shape()[2]; }
+            else { two_dimension_switch=false; Nx=ds.shape()[0]; Ny=ds.shape()[1]; Nz=ds.shape()[2]; }
+            s(0)=dim; s(1)=Nx; s(2)=Ny; s(3)=Nz;
+        }
+        H5Fclose(file_id);
   	} else {
     	if (rank_mpi==0) cerr<<"\nDesired file "<<fold+file+".h5 does not exist\n\n";
     	h5::finalize(); finalize_mpi_runtime(); exit(1);
@@ -184,29 +970,23 @@ bool compare(Array<int,1> A, Array<int,1> B){
 }
 void Read_fields() {
     if (!test_switch){
-        if (two_dimension_switch) {
-            if (scalar_switch) CheckAndConvert("in/", TName, TdName, true);
-            else { CheckAndConvert("in/", UName, UdName, false); CheckAndConvert("in/", WName, WdName, false); }
-        } else {
-            if (scalar_switch) CheckAndConvert("in/", TName, TdName, true);
-            else { CheckAndConvert("in/", UName, UdName, false); CheckAndConvert("in/", VName, VdName, false); CheckAndConvert("in/", WName, WdName, false); }
-        }
+        prepare_input_sources();
 
     	if (rank_mpi==0) cout<<"Reading from the hdf5 files\n";
         Array<int,1> s1,s2, s3;
         if (two_dimension_switch){
-            if (scalar_switch) { get_input_shape("in/", TName, TdName, s1); resize_input(); calculate_grid_spacing(); read_2D(T_2D,"in/", TName, TdName); }
+            if (scalar_switch) { get_input_shape("", TName, TdName, s1); resize_input(); if (!load_structured_grid_spacing(TName+".h5")) calculate_grid_spacing(); read_2D(T_2D,"", TName, TdName); }
             else { 
-                get_input_shape("in/", UName, UdName, s1); get_input_shape("in/", WName, WdName, s2);
+                get_input_shape("", UName, UdName, s1); get_input_shape("", WName, WdName, s2);
                 if (!compare(s1,s2)) { if (rank_mpi==0) cerr<<"\nIncompatible dimension data\n\n"; h5::finalize(); finalize_mpi_runtime(); exit(1); }
-                resize_input(); calculate_grid_spacing(); read_2D(V1_2D,"in/", UName, UdName); read_2D(V3_2D,"in/", WName, WdName);
+                resize_input(); if (!load_structured_grid_spacing(UName+".h5")) calculate_grid_spacing(); read_2D(V1_2D,"", UName, UdName); read_2D(V3_2D,"", WName, WdName);
             }
         } else {
-            if (scalar_switch) { get_input_shape("in/", TName, TdName, s1); resize_input(); calculate_grid_spacing(); read_3D(T, "in/", TName, TdName); }
+            if (scalar_switch) { get_input_shape("", TName, TdName, s1); resize_input(); if (!load_structured_grid_spacing(TName+".h5")) calculate_grid_spacing(); read_3D(T, "", TName, TdName); }
             else {
-            	get_input_shape("in/", UName, UdName, s1); get_input_shape("in/", VName, VdName, s2); get_input_shape("in/", WName, WdName, s3);
+            	get_input_shape("", UName, UdName, s1); get_input_shape("", VName, VdName, s2); get_input_shape("", WName, WdName, s3);
             	if (!compare(s1,s2) || !compare(s2,s3)) { if (rank_mpi==0) cerr<<"\nIncompatible dimension data\n\n"; h5::finalize(); finalize_mpi_runtime(); exit(1); }
-            	resize_input(); calculate_grid_spacing(); read_3D(V1, "in/", UName, UdName); read_3D(V2, "in/", VName, VdName); read_3D(V3, "in/", WName, WdName);
+            	resize_input(); if (!load_structured_grid_spacing(UName+".h5")) calculate_grid_spacing(); read_3D(V1, "", UName, UdName); read_3D(V2, "", VName, VdName); read_3D(V3, "", WName, WdName);
             }
         }
     } else {
@@ -353,9 +1133,8 @@ void write_4D(Array<double,4> A, string file) {
       if (rank_mpi==0) cout<<"Writing "<<q<<" order to file.\n"; string qstr = int_to_str(q);
       h5::Dataset ds = f.create_dataset(file+qstr, h5::shape(nx,ny,nz), "double");
       Array<double,3> t(nx,ny,nz); t = A(Range::all(),Range::all(),Range::all(),q-q1);
-      ds << t.data(); ds.close();
+      ds << t.data();
   }
-  f.close();
 }
 
 void write_3D(Array<double,3> A, string file) {
@@ -364,14 +1143,67 @@ void write_3D(Array<double,3> A, string file) {
       if (rank_mpi==0) cout<<"Writing "<<q<<" order to file.\n"; string qstr = int_to_str(q);
       h5::Dataset ds = f.create_dataset(file+qstr, h5::shape(nx,nz), "double");
       Array<double,2> t(nx,nz); t = A(Range::all(),Range::all(),q-q1);
-      ds << t.data(); ds.close();
+      ds << t.data();
   }
-  f.close();
 }
 
 void show_checklist(){ if (rank_mpi==0) cerr<<"Error: Check inputs in 'in/' folder.\n"; }
-void read_2D(Array<double,2> A, string fold, string file, string dset) { h5::File f(fold+file+".h5", "r"); h5::Dataset ds = f[dset]; ds >> A.data(); ds.close(); f.close(); }
-void read_3D(Array<double,3> A, string fold, string file, string dset) { h5::File f(fold+file+".h5", "r"); h5::Dataset ds = f[dset]; ds >> A.data(); ds.close(); f.close(); }
+void read_2D(Array<double,2> A, string fold, string file, string dset) {
+    string path = fold+file+".h5";
+    hid_t file_id = H5Fopen(path.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    hid_t dset_id = H5Dopen2(file_id, dset.c_str(), H5P_DEFAULT);
+    hid_t space_id = H5Dget_space(dset_id);
+    int rank = H5Sget_simple_extent_ndims(space_id);
+    std::vector<hsize_t> dims(rank, 1);
+    H5Sget_simple_extent_dims(space_id, &dims[0], NULL);
+    if (rank == 2 && dims[0] == static_cast<hsize_t>(A.extent(0)) && dims[1] == static_cast<hsize_t>(A.extent(1))) {
+        H5Dread(dset_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, A.data());
+    } else if (rank == 3 && dims[0] >= static_cast<hsize_t>(A.extent(0)) && dims[2] >= static_cast<hsize_t>(A.extent(1))) {
+        hsize_t start[3] = {0, 0, 0};
+        hsize_t count[3] = {static_cast<hsize_t>(A.extent(0)), 1, static_cast<hsize_t>(A.extent(1))};
+        H5Sselect_hyperslab(space_id, H5S_SELECT_SET, start, NULL, count, NULL);
+        hid_t mem_space = H5Screate_simple(3, count, NULL);
+        std::vector<double> tmp(static_cast<std::size_t>(A.extent(0)) * A.extent(1), 0.0);
+        H5Dread(dset_id, H5T_NATIVE_DOUBLE, mem_space, space_id, H5P_DEFAULT, &tmp[0]);
+        for (int i=0; i<A.extent(0); ++i) for (int k=0; k<A.extent(1); ++k) A(i,k) = tmp[i*A.extent(1) + k];
+        H5Sclose(mem_space);
+    } else {
+        H5Sclose(space_id);
+        H5Dclose(dset_id);
+        H5Fclose(file_id);
+        throw std::runtime_error("Unsupported dataset rank for 2D read");
+    }
+    H5Sclose(space_id);
+    H5Dclose(dset_id);
+    H5Fclose(file_id);
+}
+void read_3D(Array<double,3> A, string fold, string file, string dset) {
+    string path = fold+file+".h5";
+    hid_t file_id = H5Fopen(path.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    hid_t dset_id = H5Dopen2(file_id, dset.c_str(), H5P_DEFAULT);
+    hid_t space_id = H5Dget_space(dset_id);
+    int rank = H5Sget_simple_extent_ndims(space_id);
+    std::vector<hsize_t> dims(rank, 1);
+    H5Sget_simple_extent_dims(space_id, &dims[0], NULL);
+    hsize_t count[3] = {static_cast<hsize_t>(A.extent(0)), static_cast<hsize_t>(A.extent(1)), static_cast<hsize_t>(A.extent(2))};
+    if (rank == 3 && dims[0] == count[0] && dims[1] == count[1] && dims[2] == count[2]) {
+        H5Dread(dset_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, A.data());
+    } else if (rank == 3 && dims[0] >= count[0] && dims[1] >= count[1] && dims[2] >= count[2]) {
+        hsize_t start[3] = {0, 0, 0};
+        H5Sselect_hyperslab(space_id, H5S_SELECT_SET, start, NULL, count, NULL);
+        hid_t mem_space = H5Screate_simple(3, count, NULL);
+        H5Dread(dset_id, H5T_NATIVE_DOUBLE, mem_space, space_id, H5P_DEFAULT, A.data());
+        H5Sclose(mem_space);
+    } else {
+        H5Sclose(space_id);
+        H5Dclose(dset_id);
+        H5Fclose(file_id);
+        throw std::runtime_error("Unsupported dataset rank for 3D read");
+    }
+    H5Sclose(space_id);
+    H5Dclose(dset_id);
+    H5Fclose(file_id);
+}
 
 void Read_Init(Array<double,3>& Ux, Array<double,3>& Uy, Array<double,3>& Uz){
   if (rank_mpi==0) cout<<"\nGenerating 3D velocity field: U = [x, y, z] \n";
@@ -518,69 +1350,12 @@ void SF_scalar_2D(Array<double,2> T) {
     if (rank_mpi==0) SF_Grid2D_scalar(0,0,Range::all())=0;
 }
 
-std::vector<Chunk> build_chunk_index(string txt_path, int skip_count) {
-    std::vector<Chunk> chunks; std::ifstream f(txt_path, std::ios::binary); if (!f.is_open()) return chunks;
-    string line; for (int i=0; i<skip_count; ++i) if (!std::getline(f, line)) break;
-    const long CHUNK_SIZE = 1000000;
-    while (f) { Chunk c; c.offset = f.tellg(); c.count = 0; for (long i=0; i<CHUNK_SIZE; ++i) { if (!std::getline(f, line)) break; c.count++; }
-        if (c.count > 0) chunks.push_back(c); else break; }
-    return chunks;
-}
-
-ParsedData read_chunk_at_offset(string txt_path, std::streampos offset, long count, bool isScalar) {
-    ParsedData data; std::ifstream f(txt_path, std::ios::binary); if (!f.is_open()) return data;
-    f.seekg(offset); string line;
-    for (long i=0; i<count; ++i) { if (!std::getline(f, line)) break; double x, y, z, v1, v2, v3;
-        if (isScalar) { if (std::sscanf(line.c_str(), "%lf %lf %lf %lf", &x, &y, &z, &v1) == 4) data.v1.push_back(v1); }
-        else { if (std::sscanf(line.c_str(), "%lf %lf %lf %lf %lf %lf", &x, &y, &z, &v1, &v2, &v3) == 6) data.v1.push_back(v1); }
-    }
-    return data;
-}
-
-void write_to_structured_h5(string h5_path, string dset_name, const std::vector<double>& v, int nx, int ny, int nz) {
-    int px_local=px, py_local=P/px_local, rankx=rank_mpi/py_local, ranky=rank_mpi%py_local;
-    int local_nx=nx/px_local, local_ny=ny/py_local, local_nz=nz;
-    h5::File f; if (rank_mpi == 0) { hid_t file = H5Fcreate(h5_path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT); H5Fclose(file); } MPI_Barrier(MPI_COMM_WORLD);
-    hid_t fapl = H5Pcreate(H5P_FILE_ACCESS); H5Pset_fapl_mpio(fapl, MPI_COMM_WORLD, MPI_INFO_NULL); f.setFapl(fapl); f.open(h5_path, "a");
-    h5::Plan plan; std::vector<hsize_t> global_dim={(hsize_t)nx, (hsize_t)ny, (hsize_t)nz}, local_dim={(hsize_t)local_nx, (hsize_t)local_ny, (hsize_t)local_nz};
-    h5::Select file_select(blitz::Range(rankx*local_nx, (rankx+1)*local_nx-1), blitz::Range(ranky*local_ny, (ranky+1)*local_ny-1), blitz::Range(0, local_nz-1));
-    plan.set_plan(MPI_COMM_WORLD, local_dim, h5::Select::all(3), global_dim, file_select);
-    h5::Dataset ds = f.create_dataset(dset_name, plan, "double"); ds << v.data(); ds.close(); f.close(); H5Pclose(fapl);
-}
-
-void verify_and_cleanup(string txt_path, string h5_path, string dset_name, double original_tke, long original_rows) {
-    if (rank_mpi == 0) {
-        h5::File f(h5_path, "r"); h5::Dataset ds = f[dset_name]; std::vector<hsize_t> shape = ds.shape();
-        long total_h5_rows = 1; for (auto s : shape) total_h5_rows *= s;
-        if (total_h5_rows == original_rows) {
-            Array<double, 3> data(shape[0], shape[1], shape[2]); ds >> data.data(); double h5_tke = sum(pow2(data));
-            if (std::abs(h5_tke - original_tke) / (original_tke + 1e-20) < 1e-10) { cout << "  SUCCESS: Conversion verified. Deleting " << txt_path << endl; std::remove(txt_path.c_str()); }
-        }
-        ds.close(); f.close();
-    }
-    MPI_Barrier(MPI_COMM_WORLD);
-}
-
-bool CheckAndConvert(string fold, string& filename, string& datasetname, bool isScalar) {
-    string txt_path = fold + filename + ".txt", h5_path = fold + filename + ".h5";
-    std::ifstream f_txt(txt_path); if (!f_txt.good()) return false; f_txt.close();
-    if (rank_mpi == 0) cout << "Detected TXT: " << txt_path << ". Converting to HDF5..." << endl;
-    int hc = 8; std::vector<Chunk> all_chunks; if (rank_mpi == 0) all_chunks = build_chunk_index(txt_path, hc);
-    int n_chunks = all_chunks.size(); MPI_Bcast(&n_chunks, 1, MPI_INT, 0, MPI_COMM_WORLD); if (rank_mpi != 0) all_chunks.resize(n_chunks);
-    for (int i=0; i<n_chunks; ++i) { long long off; if (rank_mpi == 0) off = (long long)all_chunks[i].offset; MPI_Bcast(&off, 1, MPI_LONG_LONG, 0, MPI_COMM_WORLD); if (rank_mpi != 0) all_chunks[i].offset = (std::streampos)off; MPI_Bcast(&all_chunks[i].count, 1, MPI_LONG, 0, MPI_COMM_WORLD); }
-    double local_tke = 0; long local_rows = 0; ParsedData local_parsed;
-    for (int i=rank_mpi; i<n_chunks; i+=P) { ParsedData d = read_chunk_at_offset(txt_path, all_chunks[i].offset, all_chunks[i].count, isScalar); local_parsed.v1.insert(local_parsed.v1.end(), d.v1.begin(), d.v1.end()); local_rows += d.v1.size(); for (double val : d.v1) local_tke += val*val; }
-    double total_tke = 0; long total_rows = 0; MPI_Allreduce(&local_tke, &total_tke, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); MPI_Allreduce(&local_rows, &total_rows, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-    int nx_v=Nx, ny_v=Ny, nz_v=Nz; if (total_rows == 274625) { nx_v=65; ny_v=65; nz_v=65; }
-    write_to_structured_h5(h5_path, filename, local_parsed.v1, nx_v, ny_v, nz_v); verify_and_cleanup(txt_path, h5_path, filename, total_tke, total_rows); datasetname = filename; return true;
-}
-
 void ComputeAndPrintTKE() {
     double local_tke = 0;
     if (two_dimension_switch) { if (scalar_switch) local_tke = sum(pow2(T_2D)); else local_tke = 0.5 * (sum(pow2(V1_2D)) + sum(pow2(V3_2D))); }
     else { if (scalar_switch) local_tke = sum(pow2(T)); else local_tke = 0.5 * (sum(pow2(V1)) + sum(pow2(V2)) + sum(pow2(V3))); }
     double total_tke = 0; MPI_Reduce(&local_tke, &total_tke, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    if (rank_mpi == 0) cout << "TOTAL KINETIC ENERGY (or Scalar SumSq): " << total_tke << endl;
+    if (rank_mpi == 0) cout << "TOTAL KINETIC ENERGY (or Scalar SumSq): " << total_tke / double(P) << endl;
 }
 
 void DumpFieldsToTxt() {

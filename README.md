@@ -268,7 +268,44 @@ Similarly for scalar fields in TPP format (expected dataset `fields/temp`):
 
 `mpirun -np [N] src/fastSF.out -s true -Q [FileName]`
 
-### v) Output Information
+### v) 3D Sampled-Data Workflow
+
+For 3D periodic sampled-data runs, `fastSF` can now accept either a raw sampled-data `.txt` file or a structured TPP-style `.h5` file directly.
+
+- If a `.txt` input is provided, `fastSF` converts it to structured HDF5 in parallel, trims duplicated periodic endpoint planes, verifies the converted file, prints the total KE, and then deletes the source `.txt`.
+- If an `.h5` input is provided, the conversion step is skipped.
+
+Example commands:
+
+`mpirun -np 4 src/fastSF.out -U data/SampledData0.txt`
+
+`mpirun -np 4 src/fastSF.out -U data/SampledData0.h5`
+
+Recommended `para.yaml` baseline for 3D periodic velocity runs:
+
+```yaml
+program:
+    scalar_switch: false
+    2D_switch : false
+    Only_longitudinal: true
+    Processors_X: 2
+
+domain_dimension :
+    Lx : 1.0
+    Ly : 1.0
+    Lz : 1.0
+
+structure_function :
+    q1 : 1
+    q2 : 1
+
+test :
+    test_switch : false
+```
+
+Full instructions are documented in `docs/SampledData3D.md`.
+
+### vi) Output Information
 
 Unless specified otherwise by the user via command-line arguments, the following output files are written by `fastSF`.
 

@@ -46,9 +46,11 @@ PKG_PACKAGES ?= yaml-cpp blitz
 PREFIX ?=
 H5SI_ROOT ?= $(PREFIX)
 HDF5_ROOT ?= $(PREFIX)
+CPPFLAGS += -I.
 CPPFLAGS += $(shell $(PKG_CONFIG) --cflags $(PKG_PACKAGES) 2>/dev/null)
 LDLIBS += $(shell $(PKG_CONFIG) --libs $(PKG_PACKAGES) 2>/dev/null)
 CXXFLAGS ?= -std=c++11 -O3 -DH5SI_ENABLE_MPI -DH5SI_ENABLE_MPI
+SRCS := fastSF.cc input_utils.cc
 
 ifneq ($(strip $(H5SI_ROOT)),)
 CPPFLAGS += -I$(H5SI_ROOT)/include
@@ -65,6 +67,9 @@ endif
 RPATH_FLAGS := $(foreach dir,$(sort $(RPATH_DIRS)),-Wl,-rpath,$(dir))
 LDLIBS += -lh5si -lhdf5
 
-Structure: fastSF.cc
-	$(MPICXX) $(CXXFLAGS) $(CPPFLAGS) fastSF.cc $(LDFLAGS) $(RPATH_FLAGS) $(LDLIBS) -o fastSF.out
+Structure: $(SRCS)
+	$(MPICXX) $(CXXFLAGS) $(CPPFLAGS) $(SRCS) $(LDFLAGS) $(RPATH_FLAGS) $(LDLIBS) -o fastSF.out
 	#mpic++ fastSF.cc -fstack-protector -O3 -lh5si -lhdf5 -lyaml-cpp -o fastSF.out
+
+test_input_unit.out: input_utils.cc ../test/test_input_unit.cc
+	$(MPICXX) -std=c++11 $(CPPFLAGS) input_utils.cc ../test/test_input_unit.cc -o test_input_unit.out

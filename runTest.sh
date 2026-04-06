@@ -70,4 +70,7 @@ run_case test_velocity_3D
 echo "Running TPP format tests..."
 ./test_tpp_all.sh
 
+echo "Running sampled TXT/HDF5 input tests..."
+bash test_input_conversion.sh
+
 "$PYTHON_BIN" test.py
