@@ -1,3 +1,5 @@
+[fastSF] Resolving velocity input source...
+[fastSF] Using direct structured velocity HDF5 input.
 Reading from the hdf5 files
 TOTAL KINETIC ENERGY (or Scalar SumSq): 3584
 
@@ -5,6 +7,16 @@ Number of processors in x direction: 1
 Number of processors in y direction: 1
 
 Computing longitudinal and transverse S(lx, ly, lz) using 3D velocity field data..
+[fastSF] 3D velocity SF: 10% (2/16)
+[fastSF] 3D velocity SF: 20% (4/16)
+[fastSF] 3D velocity SF: 30% (5/16)
+[fastSF] 3D velocity SF: 40% (7/16)
+[fastSF] 3D velocity SF: 50% (8/16)
+[fastSF] 3D velocity SF: 60% (10/16)
+[fastSF] 3D velocity SF: 70% (12/16)
+[fastSF] 3D velocity SF: 80% (13/16)
+[fastSF] 3D velocity SF: 90% (15/16)
+[fastSF] 3D velocity SF: 100% (16/16)
 Writing 1 order to file.
 Writing 2 order to file.
 Writing 1 order to file.
@@ -12,8 +24,8 @@ Writing 2 order to file.
 
 Writing completed
 
-Time elapsed for the parallel part: 0.000623
+Time elapsed for the parallel part: 0.003345
 
-Total time elapsed: 0.002634
+Total time elapsed: 0.047101
 
 Program ends.

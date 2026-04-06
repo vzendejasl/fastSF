@@ -97,6 +97,8 @@ void write_parallel_scalar_h5(const string& h5_path, const string& field_path, c
 bool axis_has_periodic_duplicate(const std::vector<double>& axis, double domain_length);
 std::vector<double> trim_periodic_axis(const std::vector<double>& axis, double domain_length);
 bool read_bool_attribute(hid_t object_id, const std::string& name, bool default_value);
+void print_stage(const std::string& message);
+void print_loop_progress(const std::string& label, int completed, int total, int& next_percent);
 
 // Global variables
 Array <double,3> T, V1, V2, V3;
@@ -174,6 +176,26 @@ void abort_with_error(const string& message) {
 void abort_parallel_conversion(const string& message) {
     if (rank_mpi == 0) cerr << message << endl;
     MPI_Abort(MPI_COMM_WORLD, 1);
+}
+
+void print_stage(const std::string& message) {
+    if (rank_mpi == 0) cout << "[fastSF] " << message << endl;
+}
+
+void print_loop_progress(const std::string& label, int completed, int total, int& next_percent) {
+    if (rank_mpi != 0 || total <= 0) return;
+    int pct = static_cast<int>((100.0 * completed) / total);
+    if (completed >= total) {
+        if (next_percent <= 100) {
+            cout << "[fastSF] " << label << ": 100% (" << completed << "/" << total << ")" << endl;
+            next_percent = 110;
+        }
+        return;
+    }
+    while (pct >= next_percent && next_percent < 100) {
+        cout << "[fastSF] " << label << ": " << next_percent << "% (" << completed << "/" << total << ")" << endl;
+        next_percent += 10;
+    }
 }
 
 bool h5_path_exists(hid_t object_id, const string& path) {
@@ -415,6 +437,7 @@ int owner_rank_for_x_index(int ix, const std::vector<std::pair<int,int> >& x_ran
 }
 
 void write_parallel_velocity_h5(const string& h5_path, const StructuredGridInfo& grid, int x_start, int x_stop, const std::vector<double>& local_vx, const std::vector<double>& local_vy, const std::vector<double>& local_vz) {
+    print_stage("Writing structured velocity HDF5 fields in parallel...");
     hid_t fapl_id = H5Pcreate(H5P_FILE_ACCESS);
     H5Pset_fapl_mpio(fapl_id, MPI_COMM_WORLD, MPI_INFO_NULL);
     hid_t file_id = H5Fcreate(h5_path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, fapl_id);
@@ -467,6 +490,7 @@ void write_parallel_velocity_h5(const string& h5_path, const StructuredGridInfo&
 
     MPI_Barrier(MPI_COMM_WORLD);
     if (rank_mpi == 0) {
+        print_stage("Writing structured velocity grid metadata...");
         hid_t serial_file = H5Fopen(h5_path.c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
         hid_t grid_group = H5Gcreate2(serial_file, "/grid", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         H5Gclose(grid_group);
@@ -491,6 +515,7 @@ void write_parallel_velocity_h5(const string& h5_path, const StructuredGridInfo&
 
 void write_parallel_scalar_h5(const string& h5_path, const string& field_path, const StructuredGridInfo& grid, int x_start, int x_stop, const std::vector<double>& local_field) {
     string dataset_path = "/" + field_path;
+    print_stage("Writing structured scalar HDF5 field in parallel...");
     hid_t fapl_id = H5Pcreate(H5P_FILE_ACCESS);
     H5Pset_fapl_mpio(fapl_id, MPI_COMM_WORLD, MPI_INFO_NULL);
     hid_t file_id = H5Fcreate(h5_path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, fapl_id);
@@ -529,6 +554,7 @@ void write_parallel_scalar_h5(const string& h5_path, const string& field_path, c
 
     MPI_Barrier(MPI_COMM_WORLD);
     if (rank_mpi == 0) {
+        print_stage("Writing structured scalar grid metadata...");
         hid_t serial_file = H5Fopen(h5_path.c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
         hid_t grid_group = H5Gcreate2(serial_file, "/grid", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         H5Gclose(grid_group);
@@ -553,6 +579,7 @@ void write_parallel_scalar_h5(const string& h5_path, const string& field_path, c
 
 void convert_velocity_txt_to_structured_h5(const string& txt_path, const string& h5_path) {
     if (rank_mpi == 0) cout << "Detected TXT: " << txt_path << ". Converting to HDF5..." << endl;
+    print_stage("Stage 1/5: analyzing sampled-data header and chunk index...");
 
     int header_lines = 0;
     std::vector<TxtChunk> chunks;
@@ -587,6 +614,7 @@ void convert_velocity_txt_to_structured_h5(const string& txt_path, const string&
 
     StructuredGridInfo full_grid, grid;
     try {
+        print_stage("Stage 2/5: discovering structured grid from sampled-data coordinates...");
         full_grid.x = gather_unique_axis_values(local_x_set);
         full_grid.y = gather_unique_axis_values(local_y_set);
         full_grid.z = gather_unique_axis_values(local_z_set);
@@ -603,15 +631,22 @@ void convert_velocity_txt_to_structured_h5(const string& txt_path, const string&
     } catch (const std::exception& err) {
         abort_parallel_conversion(err.what());
     }
+    int trim_last_x = (grid.x.size() + 1 == full_grid.x.size()) ? 1 : 0;
+    int trim_last_y = (grid.y.size() + 1 == full_grid.y.size()) ? 1 : 0;
+    int trim_last_z = (grid.z.size() + 1 == full_grid.z.size()) ? 1 : 0;
+    if (rank_mpi == 0) {
+        cout << "[fastSF] Structured sampled-data grid: " << grid.x.size() << " x " << grid.y.size() << " x " << grid.z.size() << endl;
+        if (trim_last_x || trim_last_y || trim_last_z) {
+            cout << "[fastSF] Removed duplicated periodic endpoint planes: "
+                 << "x=" << trim_last_x << ", y=" << trim_last_y << ", z=" << trim_last_z << endl;
+        }
+    }
 
     long total_rows = 0;
     MPI_Allreduce(&local_rows, &total_rows, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
     long full_rows = static_cast<long>(full_grid.x.size() * full_grid.y.size() * full_grid.z.size());
     if (full_rows != total_rows) abort_parallel_conversion("Structured grid size does not match sampled-data row count for '" + txt_path + "'");
     long expected_rows = static_cast<long>(grid.x.size() * grid.y.size() * grid.z.size());
-    int trim_last_x = (grid.x.size() + 1 == full_grid.x.size()) ? 1 : 0;
-    int trim_last_y = (grid.y.size() + 1 == full_grid.y.size()) ? 1 : 0;
-    int trim_last_z = (grid.z.size() + 1 == full_grid.z.size()) ? 1 : 0;
 
     std::vector<std::pair<int,int> > x_ranges = split_axis_ranges(static_cast<int>(grid.x.size()), P);
     int x_start = x_ranges[rank_mpi].first;
@@ -622,6 +657,7 @@ void convert_velocity_txt_to_structured_h5(const string& txt_path, const string&
 
     std::vector< std::vector<double> > send_bins(P);
     try {
+        print_stage("Stage 3/5: redistributing sampled-data rows into MPI x-slabs...");
         for (int ci = rank_mpi; ci < static_cast<int>(chunks.size()); ci += P) {
             SampledTxtData chunk = read_txt_chunk(txt_path, chunks[ci].offset, chunks[ci].count, false);
             std::vector<int> ix = compute_axis_indices(chunk.x, full_grid.x, full_grid.dx, "x");
@@ -684,9 +720,18 @@ void convert_velocity_txt_to_structured_h5(const string& txt_path, const string&
         abort_parallel_conversion("Rank did not receive a complete x-slab during sampled-data redistribution");
     }
 
+    print_stage("Stage 4/5: assembling local velocity slab and writing HDF5...");
     write_parallel_velocity_h5(h5_path, grid, x_start, x_stop, local_vx, local_vy, local_vz);
+    std::vector< std::vector<double> >().swap(send_bins);
+    std::vector<double>().swap(sendbuf);
+    std::vector<double>().swap(recvbuf);
+    std::vector<double>().swap(local_vx);
+    std::vector<double>().swap(local_vy);
+    std::vector<double>().swap(local_vz);
+    std::vector<char>().swap(filled);
 
     if (rank_mpi == 0) {
+        print_stage("Stage 5/5: verifying converted velocity HDF5...");
         hid_t verify_file = H5Fopen(h5_path.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
         hid_t verify_ds = H5Dopen2(verify_file, "/fields/vx", H5P_DEFAULT);
         hid_t verify_space = H5Dget_space(verify_ds);
@@ -704,6 +749,7 @@ void convert_velocity_txt_to_structured_h5(const string& txt_path, const string&
 
 void convert_scalar_txt_to_structured_h5(const string& txt_path, const string& h5_path, const string& field_path) {
     if (rank_mpi == 0) cout << "Detected TXT: " << txt_path << ". Converting to HDF5..." << endl;
+    print_stage("Stage 1/5: analyzing sampled scalar header and chunk index...");
 
     int header_lines = 0;
     std::vector<TxtChunk> chunks;
@@ -738,6 +784,7 @@ void convert_scalar_txt_to_structured_h5(const string& txt_path, const string& h
 
     StructuredGridInfo full_grid, grid;
     try {
+        print_stage("Stage 2/5: discovering structured scalar grid from sampled-data coordinates...");
         full_grid.x = gather_unique_axis_values(local_x_set);
         full_grid.y = gather_unique_axis_values(local_y_set);
         full_grid.z = gather_unique_axis_values(local_z_set);
@@ -754,15 +801,22 @@ void convert_scalar_txt_to_structured_h5(const string& txt_path, const string& h
     } catch (const std::exception& err) {
         abort_parallel_conversion(err.what());
     }
+    int trim_last_x = (grid.x.size() + 1 == full_grid.x.size()) ? 1 : 0;
+    int trim_last_y = (grid.y.size() + 1 == full_grid.y.size()) ? 1 : 0;
+    int trim_last_z = (grid.z.size() + 1 == full_grid.z.size()) ? 1 : 0;
+    if (rank_mpi == 0) {
+        cout << "[fastSF] Structured scalar grid: " << grid.x.size() << " x " << grid.y.size() << " x " << grid.z.size() << endl;
+        if (trim_last_x || trim_last_y || trim_last_z) {
+            cout << "[fastSF] Removed duplicated periodic endpoint planes: "
+                 << "x=" << trim_last_x << ", y=" << trim_last_y << ", z=" << trim_last_z << endl;
+        }
+    }
 
     long total_rows = 0;
     MPI_Allreduce(&local_rows, &total_rows, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
     long full_rows = static_cast<long>(full_grid.x.size() * full_grid.y.size() * full_grid.z.size());
     if (full_rows != total_rows) abort_parallel_conversion("Structured grid size does not match sampled-data row count for '" + txt_path + "'");
     long expected_rows = static_cast<long>(grid.x.size() * grid.y.size() * grid.z.size());
-    int trim_last_x = (grid.x.size() + 1 == full_grid.x.size()) ? 1 : 0;
-    int trim_last_y = (grid.y.size() + 1 == full_grid.y.size()) ? 1 : 0;
-    int trim_last_z = (grid.z.size() + 1 == full_grid.z.size()) ? 1 : 0;
 
     std::vector<std::pair<int,int> > x_ranges = split_axis_ranges(static_cast<int>(grid.x.size()), P);
     int x_start = x_ranges[rank_mpi].first;
@@ -773,6 +827,7 @@ void convert_scalar_txt_to_structured_h5(const string& txt_path, const string& h
 
     std::vector< std::vector<double> > send_bins(P);
     try {
+        print_stage("Stage 3/5: redistributing sampled scalar rows into MPI x-slabs...");
         for (int ci = rank_mpi; ci < static_cast<int>(chunks.size()); ci += P) {
             SampledTxtData chunk = read_txt_chunk(txt_path, chunks[ci].offset, chunks[ci].count, true);
             std::vector<int> ix = compute_axis_indices(chunk.x, full_grid.x, full_grid.dx, "x");
@@ -825,9 +880,16 @@ void convert_scalar_txt_to_structured_h5(const string& txt_path, const string& h
         abort_parallel_conversion("Rank did not receive a complete x-slab during scalar sampled-data redistribution");
     }
 
+    print_stage("Stage 4/5: assembling local scalar slab and writing HDF5...");
     write_parallel_scalar_h5(h5_path, field_path, grid, x_start, x_stop, local_field);
+    std::vector< std::vector<double> >().swap(send_bins);
+    std::vector<double>().swap(sendbuf);
+    std::vector<double>().swap(recvbuf);
+    std::vector<double>().swap(local_field);
+    std::vector<char>().swap(filled);
 
     if (rank_mpi == 0) {
+        print_stage("Stage 5/5: verifying converted scalar HDF5...");
         hid_t verify_file = H5Fopen(h5_path.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
         hid_t verify_ds = H5Dopen2(verify_file, ("/" + field_path).c_str(), H5P_DEFAULT);
         hid_t verify_space = H5Dget_space(verify_ds);
@@ -844,6 +906,7 @@ void convert_scalar_txt_to_structured_h5(const string& txt_path, const string& h
 }
 
 void prepare_scalar_input() {
+    print_stage("Resolving scalar input source...");
     std::vector<std::string> search_dirs;
     search_dirs.push_back("");
     search_dirs.push_back("in");
@@ -856,12 +919,14 @@ void prepare_scalar_input() {
         TdName = field_path;
         return;
     }
+    print_stage("Using direct scalar HDF5 input.");
     TName = source.path_without_extension;
     string detected_field;
     if (is_structured_scalar_h5(source.full_path, detected_field) && TdName == "T.Fr") TdName = detected_field.substr(1);
 }
 
 void prepare_velocity_inputs() {
+    print_stage("Resolving velocity input source...");
     bool shared_velocity_file = (UName == VName && UName == WName);
     if (shared_velocity_file) {
         std::vector<std::string> search_dirs;
@@ -879,6 +944,7 @@ void prepare_velocity_inputs() {
             WdName = "fields/vz";
             return;
         }
+        print_stage("Using direct structured velocity HDF5 input.");
         UName = source.path_without_extension;
         VName = source.path_without_extension;
         WName = source.path_without_extension;
@@ -900,6 +966,7 @@ void prepare_velocity_inputs() {
     if (u_source.extension == ".txt" || v_source.extension == ".txt" || w_source.extension == ".txt") {
         throw std::runtime_error("Velocity TXT input must be provided as one sampled-data file, matching the turbulence_post_process format");
     }
+    print_stage("Using legacy multi-file HDF5 velocity input.");
     UName = u_source.path_without_extension;
     VName = v_source.path_without_extension;
     WName = w_source.path_without_extension;
@@ -1225,6 +1292,7 @@ void Read_Init(Array<double,3>& T) {
 void SFunc3D(Array<double,3> Ux, Array<double,3> Uy, Array<double,3> Uz) {
 	if (rank_mpi==0) cout<<"\nComputing longitudinal and transverse S(lx, ly, lz) using 3D velocity field data..\n";
     int c_per_proc = Nx*Ny/(4*P); Array<int, 3> idx; compute_index_list(idx, Nx, Ny);
+    int next_progress = 10;
     for (int ix=0; ix<c_per_proc; ix++){
         int x=idx(ix, 0, rank_mpi), y=idx(ix, 1, rank_mpi);
   		for(int z=0; z<Nz/2; z++){
@@ -1242,6 +1310,7 @@ void SFunc3D(Array<double,3> Ux, Array<double,3> Uy, Array<double,3> Uz) {
                 if (rank_mpi==0) for (int i=0; i<P; i++) { SF_Grid_pll(X(i),Y(i),Z(i),p_arr(i))=Spll_arr(i); SF_Grid_perp(X(i),Y(i),Z(i),p_arr(i))=Sperp_arr(i); }
         	}
   		}
+        print_loop_progress("3D velocity SF", ix + 1, c_per_proc, next_progress);
   	}
     if (rank_mpi==0) { SF_Grid_pll(0,0,0,Range::all())=0; SF_Grid_perp(0,0,0,Range::all())=0; }
 }
@@ -1249,6 +1318,7 @@ void SFunc3D(Array<double,3> Ux, Array<double,3> Uy, Array<double,3> Uz) {
 void SFunc_long_3D(Array<double,3> Ux, Array<double,3> Uy, Array<double,3> Uz) {
 if (rank_mpi==0) cout<<"\nComputing longitudinal S(lx, ly, lz) using 3D velocity field data..\n";
     int c_per_proc = Nx*Ny/(4*P); Array<int, 3> idx; compute_index_list(idx, Nx, Ny);
+    int next_progress = 10;
     for (int ix=0; ix<c_per_proc; ix++){
         int x=idx(ix, 0, rank_mpi), y=idx(ix, 1, rank_mpi);
   		for(int z=0; z<Nz/2; z++){
@@ -1266,6 +1336,7 @@ if (rank_mpi==0) cout<<"\nComputing longitudinal S(lx, ly, lz) using 3D velocity
                 if (rank_mpi==0) for (int i=0; i<P; i++) SF_Grid_pll(X(i),Y(i),Z(i),p_arr(i))=Spll_arr(i);
     		}
   		}
+        print_loop_progress("3D longitudinal SF", ix + 1, c_per_proc, next_progress);
   	}
     if (rank_mpi==0) SF_Grid_pll(0,0,0,Range::all())=0;
 }
@@ -1315,6 +1386,7 @@ void SFunc_long_2D(Array<double,2> Ux, Array<double,2> Uz) {
 void SF_scalar_3D(Array<double,3> T) {
      if (rank_mpi==0) cout<<"\nComputing S(lx, ly, lz) using 3D scalar field data..\n";
     int c_per_proc = Nx*Ny/(4*P); Array<int, 3> idx; compute_index_list(idx, Nx, Ny);
+    int next_progress = 10;
     for (int ix=0; ix<c_per_proc; ix++){
         int x=idx(ix, 0, rank_mpi), y=idx(ix, 1, rank_mpi);
         for(int z=0; z<Nz/2; z++){
@@ -1328,6 +1400,7 @@ void SF_scalar_3D(Array<double,3> T) {
                 if (rank_mpi==0) for (int i=0; i<P; i++) SF_Grid_scalar(X(i),Y(i),Z(i),p_arr(i))=St_arr(i);
             }
         }
+        print_loop_progress("3D scalar SF", ix + 1, c_per_proc, next_progress);
     }
     if (rank_mpi==0) SF_Grid_scalar(0,0,0,Range::all())=0;
 }
