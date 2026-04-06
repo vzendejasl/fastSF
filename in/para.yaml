@@ -2,7 +2,7 @@ program:
     scalar_switch: false
     2D_switch : false
     Only_longitudinal: false
-    Processors_X: 1
+    Processors_X: 4
 
 domain_dimension :
     Lx : 1.0
@@ -11,7 +11,7 @@ domain_dimension :
 
 structure_function :
     q1 : 1
-    q2 : 2
+    q2 : 7
 
 test :
     test_switch : false

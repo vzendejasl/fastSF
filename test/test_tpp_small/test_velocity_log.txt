@@ -12,8 +12,8 @@ Writing 2 order to file.
 
 Writing completed
 
-Time elapsed for the parallel part: 0.003712
+Time elapsed for the parallel part: 0.000623
 
-Total time elapsed: 0.036693
+Total time elapsed: 0.002634
 
 Program ends.
