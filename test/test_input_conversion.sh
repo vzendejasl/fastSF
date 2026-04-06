@@ -3,6 +3,19 @@ set -euo pipefail
 
 MPI_LAUNCHER="${MPI_LAUNCHER:-mpirun}"
 MPI_NP_FLAG="${MPI_NP_FLAG:--np}"
+INPUT_VELOCITY_TXT_NPROCS="${INPUT_VELOCITY_TXT_NPROCS:-2}"
+INPUT_VELOCITY_SHUFFLED_NPROCS="${INPUT_VELOCITY_SHUFFLED_NPROCS:-4}"
+INPUT_PERIODIC_VELOCITY_TXT_NPROCS="${INPUT_PERIODIC_VELOCITY_TXT_NPROCS:-2}"
+INPUT_VELOCITY_H5_NPROCS="${INPUT_VELOCITY_H5_NPROCS:-2}"
+INPUT_PERIODIC_VELOCITY_H5_NPROCS="${INPUT_PERIODIC_VELOCITY_H5_NPROCS:-2}"
+INPUT_SCALAR_TXT_NPROCS="${INPUT_SCALAR_TXT_NPROCS:-2}"
+INPUT_PERIODIC_SCALAR_TXT_NPROCS="${INPUT_PERIODIC_SCALAR_TXT_NPROCS:-2}"
+INPUT_SCALAR_H5_NPROCS="${INPUT_SCALAR_H5_NPROCS:-2}"
+INPUT_PERIODIC_SCALAR_H5_NPROCS="${INPUT_PERIODIC_SCALAR_H5_NPROCS:-2}"
+
+run_fastsf() {
+    "$MPI_LAUNCHER" "$MPI_NP_FLAG" "$1" "${@:2}"
+}
 
 if [ "$(uname)" = "Darwin" ]; then
     export FASTSF_SKIP_MPI_FINALIZE="${FASTSF_SKIP_MPI_FINALIZE:-1}"
@@ -37,7 +50,7 @@ EOF
 cd "$CASE_DIR"
 
 echo "Running sampled velocity TXT conversion test..."
-"$MPI_LAUNCHER" "$MPI_NP_FLAG" 2 "$REPO_ROOT/src/fastSF.out" -U SampledDataTxt > velocity_txt_log.txt 2>&1
+run_fastsf "$INPUT_VELOCITY_TXT_NPROCS" "$REPO_ROOT/src/fastSF.out" -U SampledDataTxt > velocity_txt_log.txt 2>&1
 grep -q "Detected TXT" velocity_txt_log.txt
 grep -q "TOTAL KINETIC ENERGY (or Scalar SumSq): 3584" velocity_txt_log.txt
 [ ! -f in/SampledDataTxt.txt ]
@@ -59,13 +72,13 @@ hf.close()
 PY
 
 echo "Running shuffled sampled velocity TXT conversion test..."
-"$MPI_LAUNCHER" "$MPI_NP_FLAG" 4 "$REPO_ROOT/src/fastSF.out" -U SampledDataTxt_shuffled > velocity_txt_shuffled_log.txt 2>&1
+run_fastsf "$INPUT_VELOCITY_SHUFFLED_NPROCS" "$REPO_ROOT/src/fastSF.out" -U SampledDataTxt_shuffled > velocity_txt_shuffled_log.txt 2>&1
 grep -q "TOTAL KINETIC ENERGY (or Scalar SumSq): 3584" velocity_txt_shuffled_log.txt
 [ ! -f in/SampledDataTxt_shuffled.txt ]
 [ -f in/SampledDataTxt_shuffled.h5 ]
 
 echo "Running periodic sampled velocity TXT conversion test..."
-"$MPI_LAUNCHER" "$MPI_NP_FLAG" 2 "$REPO_ROOT/src/fastSF.out" -U PeriodicSampledDataTxt > periodic_velocity_txt_log.txt 2>&1
+run_fastsf "$INPUT_PERIODIC_VELOCITY_TXT_NPROCS" "$REPO_ROOT/src/fastSF.out" -U PeriodicSampledDataTxt > periodic_velocity_txt_log.txt 2>&1
 grep -q "TOTAL KINETIC ENERGY (or Scalar SumSq): 3584" periodic_velocity_txt_log.txt
 [ ! -f in/PeriodicSampledDataTxt.txt ]
 [ -f in/PeriodicSampledDataTxt.h5 ]
@@ -78,7 +91,7 @@ hf.close()
 PY
 
 echo "Running structured velocity HDF5 fast-path test..."
-"$MPI_LAUNCHER" "$MPI_NP_FLAG" 2 "$REPO_ROOT/src/fastSF.out" -U StructuredVelocity > velocity_h5_log.txt 2>&1
+run_fastsf "$INPUT_VELOCITY_H5_NPROCS" "$REPO_ROOT/src/fastSF.out" -U StructuredVelocity > velocity_h5_log.txt 2>&1
 grep -q "TOTAL KINETIC ENERGY (or Scalar SumSq): 3584" velocity_h5_log.txt
 if grep -q "Detected TXT" velocity_h5_log.txt; then
     echo "Structured HDF5 path unexpectedly triggered TXT conversion"
@@ -86,7 +99,7 @@ if grep -q "Detected TXT" velocity_h5_log.txt; then
 fi
 
 echo "Running periodic structured velocity HDF5 fast-path test..."
-"$MPI_LAUNCHER" "$MPI_NP_FLAG" 2 "$REPO_ROOT/src/fastSF.out" -U PeriodicStructuredVelocity > periodic_velocity_h5_log.txt 2>&1
+run_fastsf "$INPUT_PERIODIC_VELOCITY_H5_NPROCS" "$REPO_ROOT/src/fastSF.out" -U PeriodicStructuredVelocity > periodic_velocity_h5_log.txt 2>&1
 grep -q "TOTAL KINETIC ENERGY (or Scalar SumSq): 3584" periodic_velocity_h5_log.txt
 if grep -q "Detected TXT" periodic_velocity_h5_log.txt; then
     echo "Periodic structured HDF5 path unexpectedly triggered TXT conversion"
@@ -111,7 +124,7 @@ test :
 EOF
 
 echo "Running sampled scalar TXT conversion test..."
-"$MPI_LAUNCHER" "$MPI_NP_FLAG" 2 "$REPO_ROOT/src/fastSF.out" -Q SampledScalar > scalar_txt_log.txt 2>&1
+run_fastsf "$INPUT_SCALAR_TXT_NPROCS" "$REPO_ROOT/src/fastSF.out" -Q SampledScalar > scalar_txt_log.txt 2>&1
 grep -q "Detected TXT" scalar_txt_log.txt
 grep -q "TOTAL KINETIC ENERGY (or Scalar SumSq): 512" scalar_txt_log.txt
 [ ! -f in/SampledScalar.txt ]
@@ -128,7 +141,7 @@ hf.close()
 PY
 
 echo "Running periodic sampled scalar TXT conversion test..."
-"$MPI_LAUNCHER" "$MPI_NP_FLAG" 2 "$REPO_ROOT/src/fastSF.out" -Q PeriodicSampledScalar > periodic_scalar_txt_log.txt 2>&1
+run_fastsf "$INPUT_PERIODIC_SCALAR_TXT_NPROCS" "$REPO_ROOT/src/fastSF.out" -Q PeriodicSampledScalar > periodic_scalar_txt_log.txt 2>&1
 grep -q "TOTAL KINETIC ENERGY (or Scalar SumSq): 512" periodic_scalar_txt_log.txt
 [ ! -f in/PeriodicSampledScalar.txt ]
 [ -f in/PeriodicSampledScalar.h5 ]
@@ -140,7 +153,7 @@ hf.close()
 PY
 
 echo "Running structured scalar HDF5 fast-path test..."
-"$MPI_LAUNCHER" "$MPI_NP_FLAG" 2 "$REPO_ROOT/src/fastSF.out" -Q StructuredScalar > scalar_h5_log.txt 2>&1
+run_fastsf "$INPUT_SCALAR_H5_NPROCS" "$REPO_ROOT/src/fastSF.out" -Q StructuredScalar > scalar_h5_log.txt 2>&1
 grep -q "TOTAL KINETIC ENERGY (or Scalar SumSq): 512" scalar_h5_log.txt
 if grep -q "Detected TXT" scalar_h5_log.txt; then
     echo "Structured scalar HDF5 path unexpectedly triggered TXT conversion"
@@ -148,7 +161,7 @@ if grep -q "Detected TXT" scalar_h5_log.txt; then
 fi
 
 echo "Running periodic structured scalar HDF5 fast-path test..."
-"$MPI_LAUNCHER" "$MPI_NP_FLAG" 2 "$REPO_ROOT/src/fastSF.out" -Q PeriodicStructuredScalar > periodic_scalar_h5_log.txt 2>&1
+run_fastsf "$INPUT_PERIODIC_SCALAR_H5_NPROCS" "$REPO_ROOT/src/fastSF.out" -Q PeriodicStructuredScalar > periodic_scalar_h5_log.txt 2>&1
 grep -q "TOTAL KINETIC ENERGY (or Scalar SumSq): 512" periodic_scalar_h5_log.txt
 if grep -q "Detected TXT" periodic_scalar_h5_log.txt; then
     echo "Periodic structured scalar HDF5 path unexpectedly triggered TXT conversion"

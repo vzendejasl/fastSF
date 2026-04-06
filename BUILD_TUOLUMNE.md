@@ -180,6 +180,13 @@ cd "$FASTSF_HOME/test"
 MPI_LAUNCHER=srun MPI_NP_FLAG=-n bash test_tpp_all.sh
 ```
 
+To override the rank count for that script:
+
+```bash
+cd "$FASTSF_HOME/test"
+MPI_LAUNCHER=srun MPI_NP_FLAG=-n TPP_TEST_NPROCS=2 bash test_tpp_all.sh
+```
+
 This runs one-rank velocity and scalar checks and should print:
 
 ```text
@@ -197,6 +204,31 @@ After the small TPP test passes, run the sampled TXT and HDF5 input tests:
 ```bash
 cd "$FASTSF_HOME/test"
 MPI_LAUNCHER=srun MPI_NP_FLAG=-n bash test_input_conversion.sh
+```
+
+To override ranks for the conversion cases, set one or more of these variables:
+
+```bash
+INPUT_VELOCITY_TXT_NPROCS=2
+INPUT_VELOCITY_SHUFFLED_NPROCS=4
+INPUT_PERIODIC_VELOCITY_TXT_NPROCS=2
+INPUT_VELOCITY_H5_NPROCS=2
+INPUT_PERIODIC_VELOCITY_H5_NPROCS=2
+INPUT_SCALAR_TXT_NPROCS=2
+INPUT_PERIODIC_SCALAR_TXT_NPROCS=2
+INPUT_SCALAR_H5_NPROCS=2
+INPUT_PERIODIC_SCALAR_H5_NPROCS=2
+```
+
+Example:
+
+```bash
+cd "$FASTSF_HOME/test"
+MPI_LAUNCHER=srun MPI_NP_FLAG=-n \
+INPUT_VELOCITY_TXT_NPROCS=2 \
+INPUT_VELOCITY_SHUFFLED_NPROCS=4 \
+INPUT_SCALAR_TXT_NPROCS=2 \
+bash test_input_conversion.sh
 ```
 
 This also needs `python3`, `numpy`, and `h5py`.

@@ -6,6 +6,11 @@ cd "$SCRIPT_DIR"
 
 MPI_LAUNCHER="${MPI_LAUNCHER:-mpirun}"
 MPI_NP_FLAG="${MPI_NP_FLAG:--np}"
+TPP_TEST_NPROCS="${TPP_TEST_NPROCS:-1}"
+
+run_fastsf() {
+    "$MPI_LAUNCHER" "$MPI_NP_FLAG" "$1" "${@:2}"
+}
 
 if [ "$(uname)" = "Darwin" ]; then
     export FASTSF_SKIP_MPI_FINALIZE="${FASTSF_SKIP_MPI_FINALIZE:-1}"
@@ -35,7 +40,7 @@ EOF
 
 echo "Running Small TPP Velocity 3D Test..."
 cd test_tpp_small
-"$MPI_LAUNCHER" "$MPI_NP_FLAG" 1 ../../src/fastSF.out -U TPP_Small -u fields/vx -V TPP_Small -v fields/vy -W TPP_Small -w fields/vz > test_velocity_log.txt 2>&1
+run_fastsf "$TPP_TEST_NPROCS" ../../src/fastSF.out -U TPP_Small -u fields/vx -V TPP_Small -v fields/vy -W TPP_Small -w fields/vz > test_velocity_log.txt 2>&1
 if grep -q "TOTAL KINETIC ENERGY (or Scalar SumSq): 3584" test_velocity_log.txt; then
     echo "Small TPP Velocity 3D Test PASSED"
 else
@@ -63,7 +68,7 @@ test :
     test_switch : false
 EOF
 
-"$MPI_LAUNCHER" "$MPI_NP_FLAG" 1 ../../src/fastSF.out -Q TPP_Small_Scalar -q fields/temp > test_scalar_log.txt 2>&1
+run_fastsf "$TPP_TEST_NPROCS" ../../src/fastSF.out -Q TPP_Small_Scalar -q fields/temp > test_scalar_log.txt 2>&1
 if grep -q "TOTAL KINETIC ENERGY (or Scalar SumSq): 512" test_scalar_log.txt; then
     echo "Small TPP Scalar 3D Test PASSED"
 else
