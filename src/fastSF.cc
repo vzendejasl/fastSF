@@ -1428,7 +1428,8 @@ void ComputeAndPrintTKE() {
     if (two_dimension_switch) { if (scalar_switch) local_tke = sum(pow2(T_2D)); else local_tke = 0.5 * (sum(pow2(V1_2D)) + sum(pow2(V3_2D))); }
     else { if (scalar_switch) local_tke = sum(pow2(T)); else local_tke = 0.5 * (sum(pow2(V1)) + sum(pow2(V2)) + sum(pow2(V3))); }
     double total_tke = 0; MPI_Reduce(&local_tke, &total_tke, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    if (rank_mpi == 0) cout << "TOTAL KINETIC ENERGY (or Scalar SumSq): " << total_tke / double(P) << endl;
+    double total_points = two_dimension_switch ? static_cast<double>(Nx) * Nz : static_cast<double>(Nx) * Ny * Nz;
+    if (rank_mpi == 0) cout << "MEAN KINETIC ENERGY (or Scalar MeanSq): " << total_tke / (double(P) * total_points) << endl;
 }
 
 void DumpFieldsToTxt() {

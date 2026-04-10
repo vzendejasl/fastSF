@@ -261,3 +261,49 @@ srun -n 4 ./src/fastSF.out -U SampledData0
 ```
 
 This auto-detects the standard `fields/vx`, `fields/vy`, and `fields/vz` layout.
+
+## 6. Copy-Paste Test Script
+
+If you already have a Tuolumne node allocation, you can use this helper script to reload the validated environment and run the quickest regression test.
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+module --force purge
+module load StdEnv
+module load gcc/13.3.1-magic
+module load cray-mpich/9.1.0
+module load cray-hdf5-parallel/1.14.3.7
+module load cmake/3.29.2
+
+export FASTSF_HOME=/g/g11/zendejas/Documents/fastSF
+export DEP_HOME=/g/g11/zendejas/Documents/fastSF_deps
+export PREFIX=$DEP_HOME/install
+export HDF5_ROOT=/opt/cray/pe/hdf5-parallel/1.14.3.7/gnu/12.2
+
+mkdir -p "$DEP_HOME/bin"
+export PATH="$DEP_HOME/bin:$PREFIX/bin:$PATH"
+export CPATH="$PREFIX/include:$CPATH"
+export LIBRARY_PATH="$PREFIX/lib:$PREFIX/lib64:$LIBRARY_PATH"
+export LD_LIBRARY_PATH="/opt/cray/pe/lib64/cce:$HDF5_ROOT/lib:$PREFIX/lib:$PREFIX/lib64:$LD_LIBRARY_PATH"
+export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/lib64/pkgconfig:$PREFIX/share/pkgconfig:$PKG_CONFIG_PATH"
+
+ln -sf "$(command -v python3)" "$DEP_HOME/bin/python"
+
+cd "$FASTSF_HOME/test"
+MPI_LAUNCHER=srun MPI_NP_FLAG=-n TPP_TEST_NPROCS=1 bash test_tpp_all.sh
+```
+
+If you save that as `test_fastsf_tuolumne.sh`, run it with:
+
+```bash
+bash test_fastsf_tuolumne.sh
+```
+
+If you already have a node checked out and your environment is still loaded, the shortest command to run right now is:
+
+```bash
+cd /g/g11/zendejas/Documents/fastSF/test
+MPI_LAUNCHER=srun MPI_NP_FLAG=-n TPP_TEST_NPROCS=1 bash test_tpp_all.sh
+```
