@@ -1,22 +1,95 @@
 [fastSF] Resolving velocity input source...
 [fastSF] Using direct structured velocity HDF5 input.
-Reading from the hdf5 files
-TOTAL KINETIC ENERGY (or Scalar SumSq): 3584
+[fastSF] Reading input field data from HDF5...
+[fastSF] Input fields are loaded. Computing global energy diagnostics...
+MEAN KINETIC ENERGY (or Scalar MeanSq): 7
 
 Number of processors in x direction: 1
 Number of processors in y direction: 1
+[fastSF] Problem summary:
+[fastSF]   field type: velocity
+[fastSF]   dimensionality: 3D
+[fastSF]   grid: 8 x 8 x 8
+[fastSF]   q range: 1 to 2
+[fastSF]   longitudinal only: false
+[fastSF]   domain lengths: Lx=1, Ly=1, Lz=1
+[fastSF]   grid spacing: dx=0.142857, dy=0.142857, dz=0.142857
+[fastSF]   output directory: out
+[fastSF] Allocating structure-function output arrays...
+[fastSF] Starting structure-function accumulation...
 
 Computing longitudinal and transverse S(lx, ly, lz) using 3D velocity field data..
-[fastSF] 3D velocity SF: 10% (2/16)
-[fastSF] 3D velocity SF: 20% (4/16)
-[fastSF] 3D velocity SF: 30% (5/16)
-[fastSF] 3D velocity SF: 40% (7/16)
-[fastSF] 3D velocity SF: 50% (8/16)
-[fastSF] 3D velocity SF: 60% (10/16)
-[fastSF] 3D velocity SF: 70% (12/16)
-[fastSF] 3D velocity SF: 80% (13/16)
-[fastSF] 3D velocity SF: 90% (15/16)
-[fastSF] 3D velocity SF: 100% (16/16)
+[fastSF] 3D velocity workload: 64 displacement offsets across q=1..2
+[fastSF] 3D velocity SF: 0% (0/64), starting lag idx=(0,0,0)
+[fastSF] 3D velocity SF: starting first lag-offset evaluation, lag idx=(0,0,0)
+[fastSF] 3D velocity SF: zero lag detected; bypassing temporary-array reductions and sending exact zeros, lag idx=(0,0,0)
+[fastSF] 3D velocity SF: gathering all requested q-orders for zero lag in one MPI_Gather, lag idx=(0,0,0)
+[fastSF] 3D velocity SF: 1% (1/64), elapsed 2.8926e-05 s, ETA 0.00182234 s, current lag idx=(0,0,0)
+[fastSF] 3D velocity SF: 3% (2/64), elapsed 6.0493e-05 s, ETA 0.00187528 s, current lag idx=(0,0,1)
+[fastSF] 3D velocity SF: 4% (3/64), elapsed 8.094e-05 s, ETA 0.00164578 s, current lag idx=(0,0,2)
+[fastSF] 3D velocity SF: 6% (4/64), elapsed 9.9092e-05 s, ETA 0.00148638 s, current lag idx=(0,0,3)
+[fastSF] 3D velocity SF: 7% (5/64), elapsed 0.000114517 s, ETA 0.0013513 s, current lag idx=(0,3,0)
+[fastSF] 3D velocity SF: 9% (6/64), elapsed 0.000131011 s, ETA 0.00126644 s, current lag idx=(0,3,1)
+[fastSF] 3D velocity SF: 10% (7/64), elapsed 0.000146861 s, ETA 0.00119587 s, current lag idx=(0,3,2)
+[fastSF] 3D velocity SF: 12% (8/64), elapsed 0.0001615 s, ETA 0.0011305 s, current lag idx=(0,3,3)
+[fastSF] 3D velocity SF: 14% (9/64), elapsed 0.000177801 s, ETA 0.00108656 s, current lag idx=(0,2,0)
+[fastSF] 3D velocity SF: 15% (10/64), elapsed 0.000197821 s, ETA 0.00106823 s, current lag idx=(0,2,1)
+[fastSF] 3D velocity SF: 17% (11/64), elapsed 0.000211394 s, ETA 0.00101853 s, current lag idx=(0,2,2)
+[fastSF] 3D velocity SF: 18% (12/64), elapsed 0.000224086 s, ETA 0.000971039 s, current lag idx=(0,2,3)
+[fastSF] 3D velocity SF: 20% (13/64), elapsed 0.000238262 s, ETA 0.00093472 s, current lag idx=(0,1,0)
+[fastSF] 3D velocity SF: 21% (14/64), elapsed 0.000252857 s, ETA 0.000903061 s, current lag idx=(0,1,1)
+[fastSF] 3D velocity SF: 23% (15/64), elapsed 0.000266729 s, ETA 0.000871315 s, current lag idx=(0,1,2)
+[fastSF] 3D velocity SF: 25% (16/64), elapsed 0.000280175 s, ETA 0.000840525 s, current lag idx=(0,1,3)
+[fastSF] 3D velocity SF: 26% (17/64), elapsed 0.00029134 s, ETA 0.000805469 s, current lag idx=(3,0,0)
+[fastSF] 3D velocity SF: 28% (18/64), elapsed 0.000304119 s, ETA 0.000777193 s, current lag idx=(3,0,1)
+[fastSF] 3D velocity SF: 29% (19/64), elapsed 0.000316349 s, ETA 0.000749248 s, current lag idx=(3,0,2)
+[fastSF] 3D velocity SF: 31% (20/64), elapsed 0.000328914 s, ETA 0.000723611 s, current lag idx=(3,0,3)
+[fastSF] 3D velocity SF: 32% (21/64), elapsed 0.000337542 s, ETA 0.000691157 s, current lag idx=(3,3,0)
+[fastSF] 3D velocity SF: 34% (22/64), elapsed 0.000347849 s, ETA 0.000664075 s, current lag idx=(3,3,1)
+[fastSF] 3D velocity SF: 35% (23/64), elapsed 0.000360093 s, ETA 0.000641905 s, current lag idx=(3,3,2)
+[fastSF] 3D velocity SF: 37% (24/64), elapsed 0.000370046 s, ETA 0.000616743 s, current lag idx=(3,3,3)
+[fastSF] 3D velocity SF: 39% (25/64), elapsed 0.000380851 s, ETA 0.000594128 s, current lag idx=(3,2,0)
+[fastSF] 3D velocity SF: 40% (26/64), elapsed 0.000392484 s, ETA 0.00057363 s, current lag idx=(3,2,1)
+[fastSF] 3D velocity SF: 42% (27/64), elapsed 0.000403443 s, ETA 0.000552866 s, current lag idx=(3,2,2)
+[fastSF] 3D velocity SF: 43% (28/64), elapsed 0.000413905 s, ETA 0.000532164 s, current lag idx=(3,2,3)
+[fastSF] 3D velocity SF: 45% (29/64), elapsed 0.000425108 s, ETA 0.000513061 s, current lag idx=(3,1,0)
+[fastSF] 3D velocity SF: 46% (30/64), elapsed 0.000437004 s, ETA 0.000495271 s, current lag idx=(3,1,1)
+[fastSF] 3D velocity SF: 48% (31/64), elapsed 0.000448312 s, ETA 0.000477235 s, current lag idx=(3,1,2)
+[fastSF] 3D velocity SF: 50% (32/64), elapsed 0.000459628 s, ETA 0.000459628 s, current lag idx=(3,1,3)
+[fastSF] 3D velocity SF: 51% (33/64), elapsed 0.000471564 s, ETA 0.000442984 s, current lag idx=(2,0,0)
+[fastSF] 3D velocity SF: 53% (34/64), elapsed 0.000485087 s, ETA 0.000428018 s, current lag idx=(2,0,1)
+[fastSF] 3D velocity SF: 54% (35/64), elapsed 0.000498079 s, ETA 0.000412694 s, current lag idx=(2,0,2)
+[fastSF] 3D velocity SF: 56% (36/64), elapsed 0.00051063 s, ETA 0.000397157 s, current lag idx=(2,0,3)
+[fastSF] 3D velocity SF: 57% (37/64), elapsed 0.000521118 s, ETA 0.000380275 s, current lag idx=(2,3,0)
+[fastSF] 3D velocity SF: 59% (38/64), elapsed 0.000531901 s, ETA 0.000363932 s, current lag idx=(2,3,1)
+[fastSF] 3D velocity SF: 60% (39/64), elapsed 0.000543003 s, ETA 0.000348079 s, current lag idx=(2,3,2)
+[fastSF] 3D velocity SF: 62% (40/64), elapsed 0.00055255 s, ETA 0.00033153 s, current lag idx=(2,3,3)
+[fastSF] 3D velocity SF: 64% (41/64), elapsed 0.000566247 s, ETA 0.000317651 s, current lag idx=(2,2,0)
+[fastSF] 3D velocity SF: 65% (42/64), elapsed 0.00057804 s, ETA 0.000302783 s, current lag idx=(2,2,1)
+[fastSF] 3D velocity SF: 67% (43/64), elapsed 0.000589573 s, ETA 0.000287931 s, current lag idx=(2,2,2)
+[fastSF] 3D velocity SF: 68% (44/64), elapsed 0.000600513 s, ETA 0.00027296 s, current lag idx=(2,2,3)
+[fastSF] 3D velocity SF: 70% (45/64), elapsed 0.000612777 s, ETA 0.000258728 s, current lag idx=(2,1,0)
+[fastSF] 3D velocity SF: 71% (46/64), elapsed 0.000625552 s, ETA 0.000244781 s, current lag idx=(2,1,1)
+[fastSF] 3D velocity SF: 73% (47/64), elapsed 0.000638096 s, ETA 0.000230801 s, current lag idx=(2,1,2)
+[fastSF] 3D velocity SF: 75% (48/64), elapsed 0.000649748 s, ETA 0.000216583 s, current lag idx=(2,1,3)
+[fastSF] 3D velocity SF: 76% (49/64), elapsed 0.000662458 s, ETA 0.000202793 s, current lag idx=(1,0,0)
+[fastSF] 3D velocity SF: 78% (50/64), elapsed 0.000677129 s, ETA 0.000189596 s, current lag idx=(1,0,1)
+[fastSF] 3D velocity SF: 79% (51/64), elapsed 0.000691393 s, ETA 0.000176237 s, current lag idx=(1,0,2)
+[fastSF] 3D velocity SF: 81% (52/64), elapsed 0.000704679 s, ETA 0.000162618 s, current lag idx=(1,0,3)
+[fastSF] 3D velocity SF: 82% (53/64), elapsed 0.000715356 s, ETA 0.00014847 s, current lag idx=(1,3,0)
+[fastSF] 3D velocity SF: 84% (54/64), elapsed 0.000727079 s, ETA 0.000134644 s, current lag idx=(1,3,1)
+[fastSF] 3D velocity SF: 85% (55/64), elapsed 0.000738473 s, ETA 0.000120841 s, current lag idx=(1,3,2)
+[fastSF] 3D velocity SF: 87% (56/64), elapsed 0.000749718 s, ETA 0.000107103 s, current lag idx=(1,3,3)
+[fastSF] 3D velocity SF: 89% (57/64), elapsed 0.000761842 s, ETA 9.35595e-05 s, current lag idx=(1,2,0)
+[fastSF] 3D velocity SF: 90% (58/64), elapsed 0.00077462 s, ETA 8.01331e-05 s, current lag idx=(1,2,1)
+[fastSF] 3D velocity SF: 92% (59/64), elapsed 0.000786992 s, ETA 6.66942e-05 s, current lag idx=(1,2,2)
+[fastSF] 3D velocity SF: 93% (60/64), elapsed 0.000798577 s, ETA 5.32385e-05 s, current lag idx=(1,2,3)
+[fastSF] 3D velocity SF: 95% (61/64), elapsed 0.000811326 s, ETA 3.99013e-05 s, current lag idx=(1,1,0)
+[fastSF] 3D velocity SF: 96% (62/64), elapsed 0.000825142 s, ETA 2.66175e-05 s, current lag idx=(1,1,1)
+[fastSF] 3D velocity SF: 98% (63/64), elapsed 0.00083835 s, ETA 1.33071e-05 s, current lag idx=(1,1,2)
+[fastSF] 3D velocity SF: 100% (64/64), elapsed 0.000850805 s, current lag idx=(1,1,3)
+[fastSF] Structure-function accumulation finished.
+[fastSF] Writing output HDF5 files...
 Writing 1 order to file.
 Writing 2 order to file.
 Writing 1 order to file.
@@ -24,8 +97,8 @@ Writing 2 order to file.
 
 Writing completed
 
-Time elapsed for the parallel part: 0.003345
+Time elapsed for the parallel part: 0.000864
 
-Total time elapsed: 0.047101
+Total time elapsed: 0.002984
 
 Program ends.

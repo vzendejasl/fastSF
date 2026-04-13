@@ -46,10 +46,17 @@ PKG_PACKAGES ?= yaml-cpp blitz
 PREFIX ?=
 H5SI_ROOT ?= $(PREFIX)
 HDF5_ROOT ?= $(PREFIX)
+USE_NATIVE_ARCH ?= 1
+# Local ISA tuning is opt-out. Keep fused multiply-add disabled so native builds
+# preserve the same floating-point contraction behavior as the baseline build.
+NATIVE_ARCH_FLAGS ?= -march=native -mtune=native -ffp-contract=off
 CPPFLAGS += -I.
 CPPFLAGS += $(shell $(PKG_CONFIG) --cflags $(PKG_PACKAGES) 2>/dev/null)
 LDLIBS += $(shell $(PKG_CONFIG) --libs $(PKG_PACKAGES) 2>/dev/null)
 CXXFLAGS ?= -std=c++11 -O3 -DH5SI_ENABLE_MPI -DH5SI_ENABLE_MPI
+ifeq ($(USE_NATIVE_ARCH),1)
+CXXFLAGS += $(NATIVE_ARCH_FLAGS)
+endif
 SRCS := fastSF.cc input_utils.cc
 
 ifneq ($(strip $(H5SI_ROOT)),)

@@ -1,5 +1,5 @@
 program:
-    scalar_switch: true
+    scalar_switch: false
     2D_switch : false
     Only_longitudinal: false
     Processors_X: 1

@@ -21,9 +21,12 @@
 #include <unistd.h>
 #include <vector>
 #include <set>
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
+#include <cctype>
+#include <cerrno>
 #include <stdexcept>
 #include <sys/stat.h>
 
@@ -46,16 +49,16 @@ void SCALAR_TEST_CASE_2D();
 void SCALAR_TEST_CASE_3D();
 void compute_time_elapsed(timeval, timeval, double&);
 void finalize_mpi_runtime();
-void SFunc2D(Array<double,2>, Array<double,2>);
-void SFunc_long_2D(Array<double,2>, Array<double,2>);
-void SFunc3D(Array<double,3>, Array<double,3>, Array<double,3>);
-void SFunc_long_3D(Array<double,3>, Array<double,3>, Array<double,3>);
+void SFunc2D(const Array<double,2>&, const Array<double,2>&);
+void SFunc_long_2D(const Array<double,2>&, const Array<double,2>&);
+void SFunc3D(const Array<double,3>&, const Array<double,3>&, const Array<double,3>&);
+void SFunc_long_3D(const Array<double,3>&, const Array<double,3>&, const Array<double,3>&);
 void Read_Init(Array<double,2>&, Array<double,2>&);
 void Read_Init(Array<double,3>&, Array<double,3>&, Array<double,3>&);
 void Read_Init(Array<double,2>&);
 void Read_Init(Array<double,3>&);
-void SF_scalar_3D(Array<double,3>);
-void SF_scalar_2D(Array<double,2>);
+void SF_scalar_3D(const Array<double,3>&);
+void SF_scalar_2D(const Array<double,2>&);
 void Read_fields();
 void resize_SFs();
 void calc_SFs();
@@ -98,7 +101,24 @@ bool axis_has_periodic_duplicate(const std::vector<double>& axis, double domain_
 std::vector<double> trim_periodic_axis(const std::vector<double>& axis, double domain_length);
 bool read_bool_attribute(hid_t object_id, const std::string& name, bool default_value);
 void print_stage(const std::string& message);
-void print_loop_progress(const std::string& label, int completed, int total, int& next_percent);
+struct ProgressState {
+    int next_percent;
+    int next_offset_report;
+    int offset_report_stride;
+    double start_time;
+    double last_log_time;
+    double last_detail_time;
+    double heartbeat_seconds;
+};
+ProgressState make_progress_state(double heartbeat_seconds = 120.0, int first_percent = 1);
+void print_progress_start(const std::string& label, int total, int x, int y, int z);
+void print_loop_progress(const std::string& label, int completed, int total, ProgressState& state, int x, int y, int z);
+void print_offset_stage(const std::string& label, const std::string& stage, ProgressState& state, int x, int y, int z, bool force);
+void print_q_stage(const std::string& label, const std::string& stage, ProgressState& state, int x, int y, int z, int q_order, bool force);
+void print_run_summary();
+void configure_output_location(const std::string& input_path);
+void ensure_directory_exists(const std::string& dir_path);
+std::string output_file_path(const std::string& file_stem);
 
 // Global variables
 Array <double,3> T, V1, V2, V3;
@@ -111,6 +131,7 @@ double dx, dy, dz, Lx, Ly, Lz;
 string UName="U.V1r", VName="U.V2r", WName="U.V3r", TName="T.Fr";
 string UdName="U.V1r", VdName="U.V2r", WdName="U.V3r", TdName="T.Fr";
 string SF_Grid_pll_name = "SF_Grid_pll", SF_Grid_perp_name = "SF_Grid_perp", SF_Grid_scalar_name = "SF_Grid_scalar";
+string output_dir = "out";
 
 int main(int argc, char *argv[]) {
     MPI_Init(NULL, NULL);
@@ -131,14 +152,19 @@ int main(int argc, char *argv[]) {
     	if (two_dimension_switch) cout<<"Number of processors in z direction: "<<P/px<<endl;
     	else cout<<"Number of processors in y direction: "<<P/px<<endl;
   	}  
+    print_run_summary();
  	if (px > P || (Nx > 1 && (Nx/2)%px != 0)) {
         if (rank_mpi==0) cout<<"ERROR in processor configuration! Aborting.."<<endl;
         h5::finalize(); finalize_mpi_runtime(); exit(1);
     }
+    print_stage("Allocating structure-function output arrays...");
     resize_SFs();
+    print_stage("Starting structure-function accumulation...");
     gettimeofday(&start_pt,NULL);
     calc_SFs();
     gettimeofday(&end_pt,NULL);
+    print_stage("Structure-function accumulation finished.");
+    print_stage("Writing output HDF5 files...");
     write_SFs();
     if (test_switch) test_cases();
     gettimeofday(&end_t,NULL);
@@ -182,20 +208,150 @@ void print_stage(const std::string& message) {
     if (rank_mpi == 0) cout << "[fastSF] " << message << endl;
 }
 
-void print_loop_progress(const std::string& label, int completed, int total, int& next_percent) {
+ProgressState make_progress_state(double heartbeat_seconds, int first_percent) {
+    ProgressState state;
+    state.next_percent = first_percent;
+    state.next_offset_report = 100;
+    state.offset_report_stride = 100;
+    state.start_time = MPI_Wtime();
+    state.last_log_time = state.start_time;
+    state.last_detail_time = state.start_time;
+    state.heartbeat_seconds = heartbeat_seconds;
+    return state;
+}
+
+void print_progress_start(const std::string& label, int total, int x, int y, int z) {
     if (rank_mpi != 0 || total <= 0) return;
+    cout << "[fastSF] " << label << ": 0% (0/" << total << ")";
+    if (y >= 0) cout << ", starting lag idx=(" << x << "," << y << "," << z << ")";
+    else cout << ", starting lag idx=(" << x << "," << z << ")";
+    cout << endl;
+}
+
+void print_loop_progress(const std::string& label, int completed, int total, ProgressState& state, int x, int y, int z) {
+    if (rank_mpi != 0 || total <= 0) return;
+    double now = MPI_Wtime();
     int pct = static_cast<int>((100.0 * completed) / total);
-    if (completed >= total) {
-        if (next_percent <= 100) {
-            cout << "[fastSF] " << label << ": 100% (" << completed << "/" << total << ")" << endl;
-            next_percent = 110;
-        }
+    double elapsed = now - state.start_time;
+    bool finished = (completed >= total);
+    bool crossed_percent = (pct >= state.next_percent);
+    bool crossed_offset_report = (completed >= state.next_offset_report);
+    bool heartbeat = (!finished && (now - state.last_log_time) >= state.heartbeat_seconds);
+
+    if (!finished && !crossed_percent && !crossed_offset_report && !heartbeat) return;
+
+    int display_pct = finished ? 100 : pct;
+    if (crossed_percent && !finished) state.next_percent = pct + 1;
+    if (crossed_offset_report && !finished) {
+        while (completed >= state.next_offset_report) state.next_offset_report += state.offset_report_stride;
+    }
+    if (finished) state.next_percent = 101;
+
+    cout << "[fastSF] " << label << ": " << display_pct << "% (" << completed << "/" << total << ")";
+    if (completed > 0 && elapsed > 0.0) {
+        double rate = completed / elapsed;
+        double remaining = (rate > 0.0) ? (total - completed) / rate : 0.0;
+        cout << ", elapsed " << elapsed << " s";
+        if (!finished) cout << ", ETA " << remaining << " s";
+    }
+    if (y >= 0) cout << ", current lag idx=(" << x << "," << y << "," << z << ")";
+    else cout << ", current lag idx=(" << x << "," << z << ")";
+    cout << endl;
+    state.last_log_time = now;
+    state.last_detail_time = now;
+}
+
+void print_offset_stage(const std::string& label, const std::string& stage, ProgressState& state, int x, int y, int z, bool force) {
+    if (rank_mpi != 0) return;
+    double now = MPI_Wtime();
+    if (!force && (now - state.last_detail_time) < state.heartbeat_seconds) return;
+    cout << "[fastSF] " << label << ": " << stage << ", lag idx=(" << x << "," << y << "," << z << ")" << endl;
+    state.last_detail_time = now;
+}
+
+void print_q_stage(const std::string& label, const std::string& stage, ProgressState& state, int x, int y, int z, int q_order, bool force) {
+    if (rank_mpi != 0) return;
+    double now = MPI_Wtime();
+    if (!force && (now - state.last_detail_time) < state.heartbeat_seconds) return;
+    cout << "[fastSF] " << label << ": " << stage
+         << ", q=" << q_order
+         << ", lag idx=(" << x << "," << y << "," << z << ")" << endl;
+    state.last_detail_time = now;
+}
+
+void print_run_summary() {
+    if (rank_mpi != 0) return;
+    cout << "[fastSF] Problem summary:" << endl;
+    cout << "[fastSF]   field type: " << (scalar_switch ? "scalar" : "velocity") << endl;
+    cout << "[fastSF]   dimensionality: " << (two_dimension_switch ? "2D" : "3D") << endl;
+    if (two_dimension_switch) cout << "[fastSF]   grid: " << Nx << " x " << Nz << endl;
+    else cout << "[fastSF]   grid: " << Nx << " x " << Ny << " x " << Nz << endl;
+    cout << "[fastSF]   q range: " << q1 << " to " << q2 << endl;
+    if (!scalar_switch) cout << "[fastSF]   longitudinal only: " << (longitudinal ? "true" : "false") << endl;
+    cout << "[fastSF]   domain lengths: Lx=" << Lx << ", Ly=" << Ly << ", Lz=" << Lz << endl;
+    cout << "[fastSF]   grid spacing: dx=" << dx << ", dy=" << dy << ", dz=" << dz << endl;
+    cout << "[fastSF]   output directory: " << output_dir << endl;
+}
+
+namespace {
+
+std::string path_parent(const std::string& path) {
+    std::size_t slash = path.find_last_of("/\\");
+    if (slash == std::string::npos) return "";
+    return path.substr(0, slash);
+}
+
+std::string path_leaf(const std::string& path) {
+    std::size_t slash = path.find_last_of("/\\");
+    if (slash == std::string::npos) return path;
+    return path.substr(slash + 1);
+}
+
+std::string join_path_local(const std::string& dir, const std::string& leaf) {
+    if (dir.empty() || dir == ".") return leaf;
+    if (leaf.empty()) return dir;
+    if (dir[dir.size() - 1] == '/') return dir + leaf;
+    return dir + "/" + leaf;
+}
+
+std::string trim_leading_zeros(const std::string& digits) {
+    std::size_t first_nonzero = digits.find_first_not_of('0');
+    if (first_nonzero == std::string::npos) return "0";
+    return digits.substr(first_nonzero);
+}
+
+std::string cycle_label_from_input_path(const std::string& input_path) {
+    std::string stem = basename_without_extension(input_path);
+    int pos = static_cast<int>(stem.size()) - 1;
+    while (pos >= 0 && std::isdigit(static_cast<unsigned char>(stem[pos]))) pos--;
+    if (pos == static_cast<int>(stem.size()) - 1) return "out";
+    return "structure_function_data_" + trim_leading_zeros(stem.substr(pos + 1));
+}
+
+}
+
+void ensure_directory_exists(const std::string& dir_path) {
+    if (dir_path.empty() || dir_path == ".") return;
+    if (mkdir(dir_path.c_str(), 0777) != 0 && errno != EEXIST) {
+        abort_with_error("Unable to create output directory '" + dir_path + "'");
+    }
+}
+
+void configure_output_location(const std::string& input_path) {
+    if (input_path.empty()) {
+        output_dir = "out";
         return;
     }
-    while (pct >= next_percent && next_percent < 100) {
-        cout << "[fastSF] " << label << ": " << next_percent << "% (" << completed << "/" << total << ")" << endl;
-        next_percent += 10;
-    }
+    std::string input_dir = path_parent(input_path);
+    std::string label = cycle_label_from_input_path(input_path);
+    if (path_leaf(input_dir) == "in") output_dir = join_path_local(path_parent(input_dir), label);
+    else if (!input_dir.empty()) output_dir = join_path_local(input_dir, label);
+    else output_dir = label;
+}
+
+std::string output_file_path(const std::string& file_stem) {
+    if (file_stem.find('/') != std::string::npos || file_stem.find('\\') != std::string::npos) return file_stem + ".h5";
+    return join_path_local(output_dir, file_stem + ".h5");
 }
 
 bool h5_path_exists(hid_t object_id, const string& path) {
@@ -912,6 +1068,7 @@ void prepare_scalar_input() {
     search_dirs.push_back("in");
     search_dirs.push_back("data");
     ResolvedInputPath source = resolve_input_path(TName, search_dirs);
+    configure_output_location(source.full_path);
     if (source.extension == ".txt") {
         string field_path = default_scalar_field_path();
         convert_scalar_txt_to_structured_h5(source.full_path, source.path_without_extension + ".h5", field_path);
@@ -934,6 +1091,7 @@ void prepare_velocity_inputs() {
         search_dirs.push_back("in");
         search_dirs.push_back("data");
         ResolvedInputPath source = resolve_input_path(UName, search_dirs);
+        configure_output_location(source.full_path);
         if (source.extension == ".txt") {
             convert_velocity_txt_to_structured_h5(source.full_path, source.path_without_extension + ".h5");
             UName = source.path_without_extension;
@@ -963,6 +1121,7 @@ void prepare_velocity_inputs() {
     ResolvedInputPath u_source = resolve_input_path(UName, search_dirs);
     ResolvedInputPath v_source = resolve_input_path(VName, search_dirs);
     ResolvedInputPath w_source = resolve_input_path(WName, search_dirs);
+    configure_output_location(u_source.full_path);
     if (u_source.extension == ".txt" || v_source.extension == ".txt" || w_source.extension == ".txt") {
         throw std::runtime_error("Velocity TXT input must be provided as one sampled-data file, matching the turbulence_post_process format");
     }
@@ -1038,8 +1197,7 @@ bool compare(Array<int,1> A, Array<int,1> B){
 void Read_fields() {
     if (!test_switch){
         prepare_input_sources();
-
-    	if (rank_mpi==0) cout<<"Reading from the hdf5 files\n";
+        print_stage("Reading input field data from HDF5...");
         Array<int,1> s1,s2, s3;
         if (two_dimension_switch){
             if (scalar_switch) { get_input_shape("", TName, TdName, s1); resize_input(); if (!load_structured_grid_spacing(TName+".h5")) calculate_grid_spacing(); read_2D(T_2D,"", TName, TdName); }
@@ -1062,6 +1220,7 @@ void Read_fields() {
         if (two_dimension_switch) scalar_switch ? Read_Init(T_2D) : Read_Init(V1_2D, V3_2D);
         else scalar_switch ? Read_Init(T) : Read_Init(V1, V2, V3);
     }
+    print_stage("Input fields are loaded. Computing global energy diagnostics...");
     ComputeAndPrintTKE();
 }
 
@@ -1084,7 +1243,7 @@ void calc_SFs() {
 
 void write_SFs() {
     if (rank_mpi==0){
-        mkdir("out",0777);
+        ensure_directory_exists(output_dir);
         if (two_dimension_switch) {
             if (scalar_switch) write_3D(SF_Grid2D_scalar, SF_Grid_scalar_name);
             else { write_3D(SF_Grid2D_pll, SF_Grid_pll_name); if (not longitudinal) write_3D(SF_Grid2D_perp, SF_Grid_perp_name); }
@@ -1124,7 +1283,7 @@ void VECTOR_TEST_CASE_3D() {
 	if (longitudinal){
 		test1.resize(Nx/2,Ny/2,Nz/2);
 		for (int order=0 ; order<=q2-q1; order++){
-			read_3D(test1,"out/",SF_Grid_pll_name,SF_Grid_pll_name+int_to_str(order+q1));
+			read_3D(test1,output_dir+"/",SF_Grid_pll_name,SF_Grid_pll_name+int_to_str(order+q1));
 			for (int i=0; i<test1.extent(0); i++) for (int j=0; j<test1.extent(1); j++) for (int k=0; k<test1.extent(2); k++){
 				double lx=dx*i, ly=dy*j, lz=dz*k; double err = (lx*lx + ly*ly + lz*lz > epsilon) ? abs((test1(i,j,k)-pow(lx*lx+ly*ly+lz*lz,(order+q1)/2.))/pow(lx*lx+ly*ly+lz*lz,(order+q1)/2.)) : abs(test1(i,j,k));
                 if (err > max) max = err;
@@ -1133,7 +1292,7 @@ void VECTOR_TEST_CASE_3D() {
 	} else {
         test1.resize(Nx/2,Ny/2,Nz/2); test2.resize(Nx/2,Ny/2,Nz/2);
 		for (int order=0 ; order<=q2-q1; order++){
-			read_3D(test1,"out/",SF_Grid_pll_name,SF_Grid_pll_name+int_to_str(order+q1)); read_3D(test2,"out/",SF_Grid_perp_name,SF_Grid_perp_name+int_to_str(order+q1));
+			read_3D(test1,output_dir+"/",SF_Grid_pll_name,SF_Grid_pll_name+int_to_str(order+q1)); read_3D(test2,output_dir+"/",SF_Grid_perp_name,SF_Grid_perp_name+int_to_str(order+q1));
 			for (int i=0; i<test1.extent(0); i++) for (int j=0; j<test1.extent(1); j++) for (int k=0; k<test1.extent(2); k++){
 				double lx=dx*i, ly=dy*j, lz=dz*k; double err1 = (lx*lx + ly*ly + lz*lz > epsilon) ? abs((test1(i,j,k)-pow(lx*lx+ly*ly+lz*lz,(order+q1)/2.))/pow(lx*lx+ly*ly+lz*lz,(order+q1)/2.)) : abs(test1(i,j,k));
                 double err2 = abs(test2(i,j,k)); if (err1 > max) max = err1; if (err2 > max) max = err2;
@@ -1148,7 +1307,7 @@ void VECTOR_TEST_CASE_2D() {
 	if (longitudinal){
 		test1.resize(Nx/2,Nz/2);
 		for (int order=0 ; order<=q2-q1; order++){
-			read_2D(test1,"out/",SF_Grid_pll_name, SF_Grid_pll_name+int_to_str(order+q1));
+			read_2D(test1,output_dir+"/",SF_Grid_pll_name, SF_Grid_pll_name+int_to_str(order+q1));
 			for (int i=0; i<test1.extent(0); i++) for (int k=0; k<test1.extent(1); k++){
 				double lx=dx*i, lz=dz*k; double err = ((lx*lx + lz*lz)>epsilon) ? abs((test1(i,k)-pow(lx*lx+lz*lz,(order+q1)/2.))/pow(lx*lx+lz*lz,(order+q1)/2.)) : abs(test1(i,k));
                 if (err > max) max=err;
@@ -1157,7 +1316,7 @@ void VECTOR_TEST_CASE_2D() {
 	} else {
 		test1.resize(Nx/2,Nz/2); test2.resize(Nx/2,Nz/2);
 		for (int order=0 ; order<=q2-q1; order++){
-			read_2D(test1,"out/",SF_Grid_pll_name,SF_Grid_pll_name+int_to_str(order+q1)); read_2D(test2,"out/",SF_Grid_perp_name,SF_Grid_perp_name+int_to_str(order+q1));
+			read_2D(test1,output_dir+"/",SF_Grid_pll_name,SF_Grid_pll_name+int_to_str(order+q1)); read_2D(test2,output_dir+"/",SF_Grid_perp_name,SF_Grid_perp_name+int_to_str(order+q1));
 			for (int i=0; i<test1.extent(0); i++) for (int k=0; k<test1.extent(1); k++){
 				double lx=dx*i, lz=dz*k; double err1 = ((lx*lx + lz*lz)>epsilon) ? abs((test1(i,k)-pow(lx*lx+lz*lz,(order+q1)/2.))/pow(lx*lx+lz*lz,(order+q1)/2.)) : abs(test1(i,k));
                 double err2 = abs(test2(i,k)); if (err1 > max) max = err1; if (err2 > max) max = err2;
@@ -1170,7 +1329,7 @@ void VECTOR_TEST_CASE_2D() {
 void SCALAR_TEST_CASE_2D() {
     double epsilon=1e-10, max=0; Array<double,2> test1; test1.resize(Nx/2,Nz/2);
 	for (int order=0 ; order<=q2-q1; order++){
-		read_2D(test1,"out/",SF_Grid_scalar_name, SF_Grid_scalar_name+int_to_str(order+q1));
+		read_2D(test1,output_dir+"/",SF_Grid_scalar_name, SF_Grid_scalar_name+int_to_str(order+q1));
 		for (int i=0; i<test1.extent(0); i++) for (int k=0; k<test1.extent(1); k++){
 			double lx=dx*i, lz=dz*k; double err = (abs(lx+lz)>epsilon) ? abs((test1(i,k)-pow(lx+lz,(order+q1)))/pow(lx+lz,(order+q1))) : abs(test1(i,k));
             if (err>max) max = err;
@@ -1182,7 +1341,7 @@ void SCALAR_TEST_CASE_2D() {
 void SCALAR_TEST_CASE_3D(){
 	double epsilon=1e-10, max=0; Array<double,3> test1; test1.resize(Nx/2,Ny/2,Nz/2);
 	for (int order=0 ; order<=q2-q1; order++){
-		read_3D(test1,"out/",SF_Grid_scalar_name, SF_Grid_scalar_name+int_to_str(order+q1));
+		read_3D(test1,output_dir+"/",SF_Grid_scalar_name, SF_Grid_scalar_name+int_to_str(order+q1));
 		for (int i=0; i<test1.extent(0); i++) for (int j=0; j<test1.extent(1); j++) for (int k=0; k<test1.extent(2); k++){
 			double lx=dx*i, ly=dy*j, lz=dz*k; double err = (abs(lx+ly+lz)>epsilon) ? abs((test1(i,j,k)-pow(lx+ly+lz,(order+q1)))/pow(lx+ly+lz,(order+q1))) : abs(test1(i,j,k));
             if (err>max) max=err;
@@ -1194,8 +1353,20 @@ void SCALAR_TEST_CASE_3D(){
 string int_to_str(int n) { stringstream ss; ss << n; return ss.str(); }
 void compute_time_elapsed(timeval s, timeval e, double& res){ res = ((e.tv_sec-s.tv_sec)*1000000u + e.tv_usec-s.tv_usec)/1.0e6; }
 
+inline double normalized_moment(const Array<double,3>& values, int q_order, int count) {
+    if (q_order == 2) return sum(values*values)/count;
+    if (q_order == 3) return sum(values*values*values)/count;
+    return sum(pow(values, q_order))/count;
+}
+
+inline double normalized_moment(const Array<double,2>& values, int q_order, int count) {
+    if (q_order == 2) return sum(values*values)/count;
+    if (q_order == 3) return sum(values*values*values)/count;
+    return sum(pow(values, q_order))/count;
+}
+
 void write_4D(Array<double,4> A, string file) {
-  int nx=A.extent(0), ny=A.extent(1), nz=A.extent(2); h5::File f("out/"+file+".h5", "w");
+  int nx=A.extent(0), ny=A.extent(1), nz=A.extent(2); h5::File f(output_file_path(file), "w");
   for (int q=q1; q<=q2; q++) {
       if (rank_mpi==0) cout<<"Writing "<<q<<" order to file.\n"; string qstr = int_to_str(q);
       h5::Dataset ds = f.create_dataset(file+qstr, h5::shape(nx,ny,nz), "double");
@@ -1205,7 +1376,7 @@ void write_4D(Array<double,4> A, string file) {
 }
 
 void write_3D(Array<double,3> A, string file) {
-  int nx=A.extent(0), nz=A.extent(1); h5::File f("out/"+file+".h5", "w");
+  int nx=A.extent(0), nz=A.extent(1); h5::File f(output_file_path(file), "w");
   for (int q=q1; q<=q2; q++) {
       if (rank_mpi==0) cout<<"Writing "<<q<<" order to file.\n"; string qstr = int_to_str(q);
       h5::Dataset ds = f.create_dataset(file+qstr, h5::shape(nx,nz), "double");
@@ -1289,136 +1460,368 @@ void Read_Init(Array<double,3>& T) {
     for (int i=0;i<Nx;i++) for (int j=0;j<Ny;j++) for (int k=0;k<Nz;k++) T(i, j, k) = i*dx + j*dy + k*dz;
 }
 
-void SFunc3D(Array<double,3> Ux, Array<double,3> Uy, Array<double,3> Uz) {
+void SFunc3D(const Array<double,3>& Ux, const Array<double,3>& Uy, const Array<double,3>& Uz) {
 	if (rank_mpi==0) cout<<"\nComputing longitudinal and transverse S(lx, ly, lz) using 3D velocity field data..\n";
     int c_per_proc = Nx*Ny/(4*P); Array<int, 3> idx; compute_index_list(idx, Nx, Ny);
-    int next_progress = 10;
+    int total_offsets = c_per_proc * (Nz/2);
+    int order_count = q2-q1+1;
+    ProgressState progress = make_progress_state();
+    std::vector<double> local_values(2*order_count, 0.0);
+    std::vector<double> gathered_values;
+    // Historical behavior allocated shape-specific work arrays inside the lag loops below.
+    // Reuse max-sized buffers instead and operate only on the active subranges for each lag.
+    Array<double,3> dUx(Nx,Ny,Nz), dUy(Nx,Ny,Nz), dUz(Nx,Ny,Nz), dUpll(Nx,Ny,Nz);
+    if (rank_mpi == 0) gathered_values.resize(2*order_count*P, 0.0);
+    if (rank_mpi == 0) cout << "[fastSF] 3D velocity workload: " << total_offsets << " displacement offsets across q=" << q1 << ".." << q2 << endl;
+    if (c_per_proc > 0) print_progress_start("3D velocity SF", total_offsets, idx(0, 0, rank_mpi), idx(0, 1, rank_mpi), 0);
     for (int ix=0; ix<c_per_proc; ix++){
         int x=idx(ix, 0, rank_mpi), y=idx(ix, 1, rank_mpi);
   		for(int z=0; z<Nz/2; z++){
+            bool first_offset = (ix == 0 && z == 0);
+            print_offset_stage("3D velocity SF", first_offset ? "starting first lag-offset evaluation" : "still sweeping lag offsets", progress, x, y, z, first_offset);
+            if (x == 0 && y == 0 && z == 0) {
+                std::fill(local_values.begin(), local_values.end(), 0.0);
+                // Historical behavior evaluated zero lag through the full temporary-array path below and
+                // then overwrote the stored origin with zero. Keep the old nonzero-lag path intact, but
+                // bypass the redundant local math here while preserving the root-visible output indices.
+                print_offset_stage("3D velocity SF", "zero lag detected; bypassing temporary-array reductions and sending exact zeros", progress, x, y, z, true);
+                print_offset_stage("3D velocity SF", "gathering all requested q-orders for zero lag in one MPI_Gather", progress, x, y, z, true);
+                MPI_Gather(local_values.data(), static_cast<int>(local_values.size()), MPI_DOUBLE,
+                           rank_mpi == 0 ? gathered_values.data() : NULL,
+                           static_cast<int>(local_values.size()), MPI_DOUBLE, 0, MPI_COMM_WORLD);
+                if (rank_mpi==0) {
+                    for (int rank_id=0; rank_id<P; rank_id++) {
+                        int x_rank = idx(ix, 0, rank_id), y_rank = idx(ix, 1, rank_id);
+                        for (int p=0; p<order_count; p++) {
+                            int base = rank_id*(2*order_count);
+                            SF_Grid_pll(x_rank,y_rank,z,p)=gathered_values[base+p];
+                            SF_Grid_perp(x_rank,y_rank,z,p)=gathered_values[base+order_count+p];
+                        }
+                    }
+                }
+                print_loop_progress("3D velocity SF", ix*(Nz/2) + z + 1, total_offsets, progress, x, y, z);
+                continue;
+            }
         	int cnt=(Nx-x)*(Ny-y)*(Nz-z); double lx=x*dx, ly=y*dy, lz=z*dz, r=sqrt(lx*lx+ly*ly+lz*lz); if (r<1e-15) r=1e-15;
-            Array<double,3> dUx(Nx-x,Ny-y,Nz-z), dUy(Nx-x,Ny-y,Nz-z), dUz(Nx-x,Ny-y,Nz-z), dUpll(Nx-x,Ny-y,Nz-z);
-        	dUx = Ux(Range(x,Nx-1),Range(y,Ny-1),Range(z,Nz-1)) - Ux(Range(0,Nx-x-1),Range(0,Ny-y-1),Range(0,Nz-z-1));
-        	dUy = Uy(Range(x,Nx-1),Range(y,Ny-1),Range(z,Nz-1)) - Uy(Range(0,Nx-x-1),Range(0,Ny-y-1),Range(0,Nz-z-1));
-        	dUz = Uz(Range(x,Nx-1),Range(y,Ny-1),Range(z,Nz-1)) - Uz(Range(0,Nx-x-1),Range(0,Ny-y-1),Range(0,Nz-z-1));
-            dUpll = (lx*dUx+ly*dUy+lz*dUz)/r; dUx = dUx-dUpll*lx/r; dUy = dUy-dUpll*ly/r; dUz = dUz-dUpll*lz/r; dUx = pow(dUx*dUx+dUy*dUy+dUz*dUz,0.5);
+            Range rx(0,Nx-x-1), ry(0,Ny-y-1), rz(0,Nz-z-1);
+        	dUx(rx,ry,rz) = Ux(Range(x,Nx-1),Range(y,Ny-1),Range(z,Nz-1)) - Ux(Range(0,Nx-x-1),Range(0,Ny-y-1),Range(0,Nz-z-1));
+        	dUy(rx,ry,rz) = Uy(Range(x,Nx-1),Range(y,Ny-1),Range(z,Nz-1)) - Uy(Range(0,Nx-x-1),Range(0,Ny-y-1),Range(0,Nz-z-1));
+        	dUz(rx,ry,rz) = Uz(Range(x,Nx-1),Range(y,Ny-1),Range(z,Nz-1)) - Uz(Range(0,Nx-x-1),Range(0,Ny-y-1),Range(0,Nz-z-1));
+            print_offset_stage("3D velocity SF", "computed velocity differences; projecting longitudinal/transverse components", progress, x, y, z, first_offset);
+            dUpll(rx,ry,rz) = (lx*dUx(rx,ry,rz)+ly*dUy(rx,ry,rz)+lz*dUz(rx,ry,rz))/r;
+            dUx(rx,ry,rz) = dUx(rx,ry,rz)-dUpll(rx,ry,rz)*lx/r;
+            dUy(rx,ry,rz) = dUy(rx,ry,rz)-dUpll(rx,ry,rz)*ly/r;
+            dUz(rx,ry,rz) = dUz(rx,ry,rz)-dUpll(rx,ry,rz)*lz/r;
+            dUx(rx,ry,rz) = sqrt(dUx(rx,ry,rz)*dUx(rx,ry,rz)+dUy(rx,ry,rz)*dUy(rx,ry,rz)+dUz(rx,ry,rz)*dUz(rx,ry,rz));
+            print_offset_stage("3D velocity SF", "reducing requested q-orders and gathering rank results", progress, x, y, z, first_offset);
         	for (int p=0; p<=q2-q1; p++){
-        		double Spll = sum(pow(dUpll,q1+p))/cnt, Sperp = sum(pow(dUx,q1+p))/cnt;
-                Array<int, 1> X(P), Y(P), Z(P), p_arr(P); Array<double, 1> Spll_arr(P), Sperp_arr(P);
-                MPI_Gather(&x, 1, MPI_INT, X.data(), 1, MPI_INT, 0, MPI_COMM_WORLD); MPI_Gather(&y, 1, MPI_INT, Y.data(), 1, MPI_INT, 0, MPI_COMM_WORLD); MPI_Gather(&z, 1, MPI_INT, Z.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
-                MPI_Gather(&Spll, 1, MPI_DOUBLE, Spll_arr.data(), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD); MPI_Gather(&p, 1, MPI_INT, p_arr.data(), 1, MPI_INT, 0, MPI_COMM_WORLD); MPI_Gather(&Sperp, 1, MPI_DOUBLE, Sperp_arr.data(), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-                if (rank_mpi==0) for (int i=0; i<P; i++) { SF_Grid_pll(X(i),Y(i),Z(i),p_arr(i))=Spll_arr(i); SF_Grid_perp(X(i),Y(i),Z(i),p_arr(i))=Sperp_arr(i); }
+                int q_order = q1 + p;
+                print_q_stage("3D velocity SF", "starting local reduction for order", progress, x, y, z, q_order, first_offset);
+        		local_values[p] = normalized_moment(dUpll(rx,ry,rz), q_order, cnt);
+                local_values[order_count+p] = normalized_moment(dUx(rx,ry,rz), q_order, cnt);
         	}
+            print_offset_stage("3D velocity SF", "completed local reductions; gathering all requested q-orders for this lag offset", progress, x, y, z, first_offset);
+            MPI_Gather(local_values.data(), static_cast<int>(local_values.size()), MPI_DOUBLE,
+                       rank_mpi == 0 ? gathered_values.data() : NULL,
+                       static_cast<int>(local_values.size()), MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            if (rank_mpi==0) {
+                for (int rank_id=0; rank_id<P; rank_id++) {
+                    int x_rank = idx(ix, 0, rank_id), y_rank = idx(ix, 1, rank_id);
+                    int base = rank_id*(2*order_count);
+                    for (int p=0; p<order_count; p++) {
+                        SF_Grid_pll(x_rank,y_rank,z,p)=gathered_values[base+p];
+                        SF_Grid_perp(x_rank,y_rank,z,p)=gathered_values[base+order_count+p];
+                    }
+                }
+            }
+            print_loop_progress("3D velocity SF", ix*(Nz/2) + z + 1, total_offsets, progress, x, y, z);
   		}
-        print_loop_progress("3D velocity SF", ix + 1, c_per_proc, next_progress);
   	}
     if (rank_mpi==0) { SF_Grid_pll(0,0,0,Range::all())=0; SF_Grid_perp(0,0,0,Range::all())=0; }
 }
 
-void SFunc_long_3D(Array<double,3> Ux, Array<double,3> Uy, Array<double,3> Uz) {
+void SFunc_long_3D(const Array<double,3>& Ux, const Array<double,3>& Uy, const Array<double,3>& Uz) {
 if (rank_mpi==0) cout<<"\nComputing longitudinal S(lx, ly, lz) using 3D velocity field data..\n";
     int c_per_proc = Nx*Ny/(4*P); Array<int, 3> idx; compute_index_list(idx, Nx, Ny);
-    int next_progress = 10;
+    int total_offsets = c_per_proc * (Nz/2);
+    int order_count = q2-q1+1;
+    ProgressState progress = make_progress_state();
+    std::vector<double> local_values(order_count, 0.0);
+    std::vector<double> gathered_values;
+    Array<double,3> dUx(Nx,Ny,Nz), dUy(Nx,Ny,Nz), dUz(Nx,Ny,Nz), dUpll(Nx,Ny,Nz);
+    if (rank_mpi == 0) gathered_values.resize(order_count*P, 0.0);
+    if (rank_mpi == 0) cout << "[fastSF] 3D longitudinal workload: " << total_offsets << " displacement offsets across q=" << q1 << ".." << q2 << endl;
+    if (c_per_proc > 0) print_progress_start("3D longitudinal SF", total_offsets, idx(0, 0, rank_mpi), idx(0, 1, rank_mpi), 0);
     for (int ix=0; ix<c_per_proc; ix++){
         int x=idx(ix, 0, rank_mpi), y=idx(ix, 1, rank_mpi);
   		for(int z=0; z<Nz/2; z++){
+            bool first_offset = (ix == 0 && z == 0);
+            print_offset_stage("3D longitudinal SF", first_offset ? "starting first lag-offset evaluation" : "still sweeping lag offsets", progress, x, y, z, first_offset);
+            if (x == 0 && y == 0 && z == 0) {
+                std::fill(local_values.begin(), local_values.end(), 0.0);
+                // Historical behavior evaluated zero lag through the full temporary-array path below and
+                // then overwrote the stored origin with zero. Keep the old nonzero-lag path intact, but
+                // bypass the redundant local math here while preserving the root-visible output indices.
+                print_offset_stage("3D longitudinal SF", "zero lag detected; bypassing temporary-array reductions and sending exact zeros", progress, x, y, z, true);
+                print_offset_stage("3D longitudinal SF", "gathering all requested q-orders for zero lag in one MPI_Gather", progress, x, y, z, true);
+                MPI_Gather(local_values.data(), static_cast<int>(local_values.size()), MPI_DOUBLE,
+                           rank_mpi == 0 ? gathered_values.data() : NULL,
+                           static_cast<int>(local_values.size()), MPI_DOUBLE, 0, MPI_COMM_WORLD);
+                if (rank_mpi==0) {
+                    for (int rank_id=0; rank_id<P; rank_id++) {
+                        int x_rank = idx(ix, 0, rank_id), y_rank = idx(ix, 1, rank_id);
+                        for (int p=0; p<order_count; p++) SF_Grid_pll(x_rank,y_rank,z,p)=gathered_values[rank_id*order_count+p];
+                    }
+                }
+                print_loop_progress("3D longitudinal SF", ix*(Nz/2) + z + 1, total_offsets, progress, x, y, z);
+                continue;
+            }
     		int cnt=(Nx-x)*(Ny-y)*(Nz-z); double lx=x*dx, ly=y*dy, lz=z*dz, r=sqrt(lx*lx+ly*ly+lz*lz); if (r<1e-15) r=1e-15;
-            Array<double,3> dUx(Nx-x,Ny-y,Nz-z), dUy(Nx-x,Ny-y,Nz-z), dUz(Nx-x,Ny-y,Nz-z), dUpll(Nx-x,Ny-y,Nz-z);
-    		dUx = Ux(Range(x,Nx-1),Range(y,Ny-1),Range(z,Nz-1)) - Ux(Range(0,Nx-x-1),Range(0,Ny-y-1),Range(0,Nz-z-1));
-    		dUy = Uy(Range(x,Nx-1),Range(y,Ny-1),Range(z,Nz-1)) - Uy(Range(0,Nx-x-1),Range(0,Ny-y-1),Range(0,Nz-z-1));
-    		dUz = Uz(Range(x,Nx-1),Range(y,Ny-1),Range(z,Nz-1)) - Uz(Range(0,Nx-x-1),Range(0,Ny-y-1),Range(0,Nz-z-1));
-            dUpll = (lx*dUx+ly*dUy+lz*dUz)/r;
+            Range rx(0,Nx-x-1), ry(0,Ny-y-1), rz(0,Nz-z-1);
+    		dUx(rx,ry,rz) = Ux(Range(x,Nx-1),Range(y,Ny-1),Range(z,Nz-1)) - Ux(Range(0,Nx-x-1),Range(0,Ny-y-1),Range(0,Nz-z-1));
+    		dUy(rx,ry,rz) = Uy(Range(x,Nx-1),Range(y,Ny-1),Range(z,Nz-1)) - Uy(Range(0,Nx-x-1),Range(0,Ny-y-1),Range(0,Nz-z-1));
+    		dUz(rx,ry,rz) = Uz(Range(x,Nx-1),Range(y,Ny-1),Range(z,Nz-1)) - Uz(Range(0,Nx-x-1),Range(0,Ny-y-1),Range(0,Nz-z-1));
+            print_offset_stage("3D longitudinal SF", "computed velocity differences; projecting longitudinal component", progress, x, y, z, first_offset);
+            dUpll(rx,ry,rz) = (lx*dUx(rx,ry,rz)+ly*dUy(rx,ry,rz)+lz*dUz(rx,ry,rz))/r;
+            print_offset_stage("3D longitudinal SF", "reducing requested q-orders and gathering rank results", progress, x, y, z, first_offset);
     		for (int p=0; p<=q2-q1; p++){
-    			double Spll = sum(pow(dUpll,q1+p))/cnt;
-                Array<int, 1> X(P), Y(P), Z(P), p_arr(P); Array<double, 1> Spll_arr(P);
-                MPI_Gather(&x, 1, MPI_INT, X.data(), 1, MPI_INT, 0, MPI_COMM_WORLD); MPI_Gather(&y, 1, MPI_INT, Y.data(), 1, MPI_INT, 0, MPI_COMM_WORLD); MPI_Gather(&z, 1, MPI_INT, Z.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
-                MPI_Gather(&Spll, 1, MPI_DOUBLE, Spll_arr.data(), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD); MPI_Gather(&p, 1, MPI_INT, p_arr.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
-                if (rank_mpi==0) for (int i=0; i<P; i++) SF_Grid_pll(X(i),Y(i),Z(i),p_arr(i))=Spll_arr(i);
+                int q_order = q1 + p;
+                print_q_stage("3D longitudinal SF", "starting local reduction for order", progress, x, y, z, q_order, first_offset);
+    			local_values[p] = normalized_moment(dUpll(rx,ry,rz), q_order, cnt);
     		}
+            print_offset_stage("3D longitudinal SF", "completed local reductions; gathering all requested q-orders for this lag offset", progress, x, y, z, first_offset);
+            MPI_Gather(local_values.data(), static_cast<int>(local_values.size()), MPI_DOUBLE,
+                       rank_mpi == 0 ? gathered_values.data() : NULL,
+                       static_cast<int>(local_values.size()), MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            if (rank_mpi==0) {
+                for (int rank_id=0; rank_id<P; rank_id++) {
+                    int x_rank = idx(ix, 0, rank_id), y_rank = idx(ix, 1, rank_id);
+                    for (int p=0; p<order_count; p++) SF_Grid_pll(x_rank,y_rank,z,p)=gathered_values[rank_id*order_count+p];
+                }
+            }
+            print_loop_progress("3D longitudinal SF", ix*(Nz/2) + z + 1, total_offsets, progress, x, y, z);
   		}
-        print_loop_progress("3D longitudinal SF", ix + 1, c_per_proc, next_progress);
   	}
     if (rank_mpi==0) SF_Grid_pll(0,0,0,Range::all())=0;
 }
 
-void SFunc2D(Array<double,2> Ux, Array<double,2> Uz) {
+void SFunc2D(const Array<double,2>& Ux, const Array<double,2>& Uz) {
      if (rank_mpi==0) cout<<"\nComputing longitudinal and transverse S(lx, lz) using 2D velocity field data..\n";
     int p_per_proc = Nx*Nz/(4*P); Array<int, 3> idx; compute_index_list(idx, Nx, Nz);
+    int order_count = q2-q1+1;
+    ProgressState progress = make_progress_state();
+    std::vector<double> local_values(2*order_count, 0.0);
+    std::vector<double> gathered_values;
+    Array<double,2> dUx(Nx,Nz), dUz(Nx,Nz), dUpll(Nx,Nz);
+    if (rank_mpi == 0) gathered_values.resize(2*order_count*P, 0.0);
+    if (rank_mpi == 0) cout << "[fastSF] 2D velocity workload: " << p_per_proc << " displacement offsets across q=" << q1 << ".." << q2 << endl;
+    if (p_per_proc > 0) print_progress_start("2D velocity SF", p_per_proc, idx(0, 0, rank_mpi), -1, idx(0, 1, rank_mpi));
     for (int ix=0; ix<p_per_proc; ix++){
         int x=idx(ix, 0, rank_mpi), z=idx(ix, 1, rank_mpi);
+        if (x == 0 && z == 0) {
+            std::fill(local_values.begin(), local_values.end(), 0.0);
+            // Historical behavior evaluated zero lag through the full temporary-array path below and
+            // then overwrote the stored origin with zero. Keep the old nonzero-lag path intact, but
+            // bypass the redundant local math here while preserving the root-visible output indices.
+            MPI_Gather(local_values.data(), static_cast<int>(local_values.size()), MPI_DOUBLE,
+                       rank_mpi == 0 ? gathered_values.data() : NULL,
+                       static_cast<int>(local_values.size()), MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            if (rank_mpi==0) {
+                for (int rank_id=0; rank_id<P; rank_id++) {
+                    int x_rank = idx(ix, 0, rank_id), z_rank = idx(ix, 1, rank_id);
+                    int base = rank_id*(2*order_count);
+                    for (int p=0; p<order_count; p++) {
+                        SF_Grid2D_pll(x_rank,z_rank,p)=gathered_values[base+p];
+                        SF_Grid2D_perp(x_rank,z_rank,p)=gathered_values[base+order_count+p];
+                    }
+                }
+            }
+            print_loop_progress("2D velocity SF", ix + 1, p_per_proc, progress, x, -1, z);
+            continue;
+        }
         int cnt=(Nx-x)*(Nz-z); double lx=x*dx, lz=z*dz, r=sqrt(lx*lx+lz*lz); if (r<1e-15) r=1e-15;
-        Array<double,2> dUx(Nx-x,Nz-z), dUz(Nx-x,Nz-z), dUpll(Nx-x,Nz-z);
-        dUx = Ux(Range(x,Nx-1),Range(z,Nz-1)) - Ux(Range(0,Nx-x-1),Range(0,Nz-z-1));
-        dUz = Uz(Range(x,Nx-1),Range(z,Nz-1)) - Uz(Range(0,Nx-x-1),Range(0,Nz-z-1));
-        dUpll = (lx*dUx+lz*dUz)/r; dUx = dUx-dUpll*lx/r; dUz = dUz-dUpll*lz/r; dUx = pow(dUx*dUx+dUz*dUz,0.5);
+        Range rx(0,Nx-x-1), rz(0,Nz-z-1);
+        dUx(rx,rz) = Ux(Range(x,Nx-1),Range(z,Nz-1)) - Ux(Range(0,Nx-x-1),Range(0,Nz-z-1));
+        dUz(rx,rz) = Uz(Range(x,Nx-1),Range(z,Nz-1)) - Uz(Range(0,Nx-x-1),Range(0,Nz-z-1));
+        dUpll(rx,rz) = (lx*dUx(rx,rz)+lz*dUz(rx,rz))/r;
+        dUx(rx,rz) = dUx(rx,rz)-dUpll(rx,rz)*lx/r;
+        dUz(rx,rz) = dUz(rx,rz)-dUpll(rx,rz)*lz/r;
+        dUx(rx,rz) = sqrt(dUx(rx,rz)*dUx(rx,rz)+dUz(rx,rz)*dUz(rx,rz));
     	for (int p=0; p<=q2-q1; p++){
-            double Spll = sum(pow(dUpll,q1+p))/cnt, Sperp = sum(pow(dUx,q1+p))/cnt;
-            Array<int, 1> X(P), Z(P), p_arr(P); Array<double, 1> Spll_arr(P), Sperp_arr(P);
-            MPI_Gather(&x, 1, MPI_INT, X.data(), 1, MPI_INT, 0, MPI_COMM_WORLD); MPI_Gather(&z, 1, MPI_INT, Z.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
-            MPI_Gather(&Spll, 1, MPI_DOUBLE, Spll_arr.data(), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD); MPI_Gather(&p, 1, MPI_INT, p_arr.data(), 1, MPI_INT, 0, MPI_COMM_WORLD); MPI_Gather(&Sperp, 1, MPI_DOUBLE, Sperp_arr.data(), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-            if (rank_mpi==0) for (int i=0; i<P; i++) { SF_Grid2D_pll(X(i),Z(i),p_arr(i))=Spll_arr(i); SF_Grid2D_perp(X(i),Z(i),p_arr(i))=Sperp_arr(i); }
+            int q_order = q1 + p;
+            local_values[p] = normalized_moment(dUpll(rx,rz), q_order, cnt);
+            local_values[order_count+p] = normalized_moment(dUx(rx,rz), q_order, cnt);
         } 
+        MPI_Gather(local_values.data(), static_cast<int>(local_values.size()), MPI_DOUBLE,
+                   rank_mpi == 0 ? gathered_values.data() : NULL,
+                   static_cast<int>(local_values.size()), MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        if (rank_mpi==0) {
+            for (int rank_id=0; rank_id<P; rank_id++) {
+                int x_rank = idx(ix, 0, rank_id), z_rank = idx(ix, 1, rank_id);
+                int base = rank_id*(2*order_count);
+                for (int p=0; p<order_count; p++) {
+                    SF_Grid2D_pll(x_rank,z_rank,p)=gathered_values[base+p];
+                    SF_Grid2D_perp(x_rank,z_rank,p)=gathered_values[base+order_count+p];
+                }
+            }
+        }
+        print_loop_progress("2D velocity SF", ix + 1, p_per_proc, progress, x, -1, z);
     }
     if (rank_mpi==0) { SF_Grid2D_pll(0,0,Range::all())=0; SF_Grid2D_perp(0,0,Range::all())=0; }
 }
 
-void SFunc_long_2D(Array<double,2> Ux, Array<double,2> Uz) {
+void SFunc_long_2D(const Array<double,2>& Ux, const Array<double,2>& Uz) {
      if (rank_mpi==0) cout<<"\nComputing longitudinal S(lx, lz) using 2D velocity field data..\n";
     int p_per_proc = Nx*Nz/(4*P); Array<int, 3> idx; compute_index_list(idx, Nx, Nz);
+    int order_count = q2-q1+1;
+    ProgressState progress = make_progress_state();
+    std::vector<double> local_values(order_count, 0.0);
+    std::vector<double> gathered_values;
+    Array<double,2> dUx(Nx,Nz), dUz(Nx,Nz), dUpll(Nx,Nz);
+    if (rank_mpi == 0) gathered_values.resize(order_count*P, 0.0);
+    if (rank_mpi == 0) cout << "[fastSF] 2D longitudinal workload: " << p_per_proc << " displacement offsets across q=" << q1 << ".." << q2 << endl;
+    if (p_per_proc > 0) print_progress_start("2D longitudinal SF", p_per_proc, idx(0, 0, rank_mpi), -1, idx(0, 1, rank_mpi));
     for (int ix=0; ix<p_per_proc; ix++){
         int x=idx(ix, 0, rank_mpi), z=idx(ix, 1, rank_mpi);
-        int cnt=(Nx-x)*(Nz-z); double lx=x*dx, lz=z*dz, r=sqrt(lx*lx+lz*lz); if (r<1e-15) r=1e-15;
-        Array<double,2> dUx(Nx-x,Nz-z), dUz(Nx-x,Nz-z), dUpll(Nx-x,Nz-z);
-        dUx = Ux(Range(x,Nx-1),Range(z,Nz-1)) - Ux(Range(0,Nx-x-1),Range(0,Nz-z-1));
-        dUz = Uz(Range(x,Nx-1),Range(z,Nz-1)) - Uz(Range(0,Nx-x-1),Range(0,Nz-z-1));
-        dUpll = (lx*dUx+lz*dUz)/r;
-        for (int p=0; p<=q2-q1; p++){
-            double Spll = sum(pow(dUpll,q1+p))/cnt;
-            Array<int, 1> X(P), Z(P), p_arr(P); Array<double, 1> Spll_arr(P);
-            MPI_Gather(&x, 1, MPI_INT, X.data(), 1, MPI_INT, 0, MPI_COMM_WORLD); MPI_Gather(&z, 1, MPI_INT, Z.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
-            MPI_Gather(&Spll, 1, MPI_DOUBLE, Spll_arr.data(), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD); MPI_Gather(&p, 1, MPI_INT, p_arr.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
-            if (rank_mpi==0) for (int i=0; i<P; i++) SF_Grid2D_pll(X(i),Z(i),p_arr(i))=Spll_arr(i);
+        if (x == 0 && z == 0) {
+            std::fill(local_values.begin(), local_values.end(), 0.0);
+            // Historical behavior evaluated zero lag through the full temporary-array path below and
+            // then overwrote the stored origin with zero. Keep the old nonzero-lag path intact, but
+            // bypass the redundant local math here while preserving the root-visible output indices.
+            MPI_Gather(local_values.data(), static_cast<int>(local_values.size()), MPI_DOUBLE,
+                       rank_mpi == 0 ? gathered_values.data() : NULL,
+                       static_cast<int>(local_values.size()), MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            if (rank_mpi==0) {
+                for (int rank_id=0; rank_id<P; rank_id++) {
+                    int x_rank = idx(ix, 0, rank_id), z_rank = idx(ix, 1, rank_id);
+                    for (int p=0; p<order_count; p++) SF_Grid2D_pll(x_rank,z_rank,p)=gathered_values[rank_id*order_count+p];
+                }
+            }
+            print_loop_progress("2D longitudinal SF", ix + 1, p_per_proc, progress, x, -1, z);
+            continue;
         }
+        int cnt=(Nx-x)*(Nz-z); double lx=x*dx, lz=z*dz, r=sqrt(lx*lx+lz*lz); if (r<1e-15) r=1e-15;
+        Range rx(0,Nx-x-1), rz(0,Nz-z-1);
+        dUx(rx,rz) = Ux(Range(x,Nx-1),Range(z,Nz-1)) - Ux(Range(0,Nx-x-1),Range(0,Nz-z-1));
+        dUz(rx,rz) = Uz(Range(x,Nx-1),Range(z,Nz-1)) - Uz(Range(0,Nx-x-1),Range(0,Nz-z-1));
+        dUpll(rx,rz) = (lx*dUx(rx,rz)+lz*dUz(rx,rz))/r;
+        for (int p=0; p<=q2-q1; p++){
+            int q_order = q1 + p;
+            local_values[p] = normalized_moment(dUpll(rx,rz), q_order, cnt);
+        }
+        MPI_Gather(local_values.data(), static_cast<int>(local_values.size()), MPI_DOUBLE,
+                   rank_mpi == 0 ? gathered_values.data() : NULL,
+                   static_cast<int>(local_values.size()), MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        if (rank_mpi==0) {
+            for (int rank_id=0; rank_id<P; rank_id++) {
+                int x_rank = idx(ix, 0, rank_id), z_rank = idx(ix, 1, rank_id);
+                for (int p=0; p<order_count; p++) SF_Grid2D_pll(x_rank,z_rank,p)=gathered_values[rank_id*order_count+p];
+            }
+        }
+        print_loop_progress("2D longitudinal SF", ix + 1, p_per_proc, progress, x, -1, z);
     }
     if (rank_mpi==0) SF_Grid2D_pll(0,0,Range::all())=0;
 }
 
-void SF_scalar_3D(Array<double,3> T) {
+void SF_scalar_3D(const Array<double,3>& T) {
      if (rank_mpi==0) cout<<"\nComputing S(lx, ly, lz) using 3D scalar field data..\n";
     int c_per_proc = Nx*Ny/(4*P); Array<int, 3> idx; compute_index_list(idx, Nx, Ny);
-    int next_progress = 10;
+    int total_offsets = c_per_proc * (Nz/2);
+    int order_count = q2-q1+1;
+    ProgressState progress = make_progress_state();
+    std::vector<double> local_values(order_count, 0.0);
+    std::vector<double> gathered_values;
+    Array<double,3> dT(Nx,Ny,Nz);
+    if (rank_mpi == 0) gathered_values.resize(order_count*P, 0.0);
+    if (rank_mpi == 0) cout << "[fastSF] 3D scalar workload: " << total_offsets << " displacement offsets across q=" << q1 << ".." << q2 << endl;
+    if (c_per_proc > 0) print_progress_start("3D scalar SF", total_offsets, idx(0, 0, rank_mpi), idx(0, 1, rank_mpi), 0);
     for (int ix=0; ix<c_per_proc; ix++){
         int x=idx(ix, 0, rank_mpi), y=idx(ix, 1, rank_mpi);
         for(int z=0; z<Nz/2; z++){
-            int cnt=(Nx-x)*(Ny-y)*(Nz-z); Array<double,3> dT(Nx-x,Ny-y,Nz-z);
-            dT = T(Range(x,Nx-1),Range(y,Ny-1),Range(z,Nz-1)) - T(Range(0,Nx-x-1),Range(0,Ny-y-1),Range(0,Nz-z-1));
-            for (int p=0; p<=q2-q1; p++){
-                double St = sum(pow(dT,q1+p))/cnt;
-                Array<int, 1> X(P), Y(P), Z(P), p_arr(P); Array<double, 1> St_arr(P);
-                MPI_Gather(&x, 1, MPI_INT, X.data(), 1, MPI_INT, 0, MPI_COMM_WORLD); MPI_Gather(&y, 1, MPI_INT, Y.data(), 1, MPI_INT, 0, MPI_COMM_WORLD); MPI_Gather(&z, 1, MPI_INT, Z.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
-                MPI_Gather(&St, 1, MPI_DOUBLE, St_arr.data(), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD); MPI_Gather(&p, 1, MPI_INT, p_arr.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
-                if (rank_mpi==0) for (int i=0; i<P; i++) SF_Grid_scalar(X(i),Y(i),Z(i),p_arr(i))=St_arr(i);
+            if (x == 0 && y == 0 && z == 0) {
+                std::fill(local_values.begin(), local_values.end(), 0.0);
+                // Historical behavior evaluated zero lag through the full temporary-array path below and
+                // then overwrote the stored origin with zero. Keep the old nonzero-lag path intact, but
+                // bypass the redundant local math here while preserving the root-visible output indices.
+                MPI_Gather(local_values.data(), static_cast<int>(local_values.size()), MPI_DOUBLE,
+                           rank_mpi == 0 ? gathered_values.data() : NULL,
+                           static_cast<int>(local_values.size()), MPI_DOUBLE, 0, MPI_COMM_WORLD);
+                if (rank_mpi==0) {
+                    for (int rank_id=0; rank_id<P; rank_id++) {
+                        int x_rank = idx(ix, 0, rank_id), y_rank = idx(ix, 1, rank_id);
+                        for (int p=0; p<order_count; p++) SF_Grid_scalar(x_rank,y_rank,z,p)=gathered_values[rank_id*order_count+p];
+                    }
+                }
+                print_loop_progress("3D scalar SF", ix*(Nz/2) + z + 1, total_offsets, progress, x, y, z);
+                continue;
             }
+            int cnt=(Nx-x)*(Ny-y)*(Nz-z); Range rx(0,Nx-x-1), ry(0,Ny-y-1), rz(0,Nz-z-1);
+            dT(rx,ry,rz) = T(Range(x,Nx-1),Range(y,Ny-1),Range(z,Nz-1)) - T(Range(0,Nx-x-1),Range(0,Ny-y-1),Range(0,Nz-z-1));
+            for (int p=0; p<=q2-q1; p++){
+                int q_order = q1 + p;
+                local_values[p] = normalized_moment(dT(rx,ry,rz), q_order, cnt);
+            }
+            MPI_Gather(local_values.data(), static_cast<int>(local_values.size()), MPI_DOUBLE,
+                       rank_mpi == 0 ? gathered_values.data() : NULL,
+                       static_cast<int>(local_values.size()), MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            if (rank_mpi==0) {
+                for (int rank_id=0; rank_id<P; rank_id++) {
+                    int x_rank = idx(ix, 0, rank_id), y_rank = idx(ix, 1, rank_id);
+                    for (int p=0; p<order_count; p++) SF_Grid_scalar(x_rank,y_rank,z,p)=gathered_values[rank_id*order_count+p];
+                }
+            }
+            print_loop_progress("3D scalar SF", ix*(Nz/2) + z + 1, total_offsets, progress, x, y, z);
         }
-        print_loop_progress("3D scalar SF", ix + 1, c_per_proc, next_progress);
     }
     if (rank_mpi==0) SF_Grid_scalar(0,0,0,Range::all())=0;
 }
 
-void SF_scalar_2D(Array<double,2> T) {
+void SF_scalar_2D(const Array<double,2>& T) {
      if (rank_mpi==0) cout<<"\nComputing S(lx, lz) using 2D scalar field data..\n";
     int p_per_proc = Nx*Nz/(4*P); Array<int, 3> idx; compute_index_list(idx, Nx, Nz);
+    int order_count = q2-q1+1;
+    ProgressState progress = make_progress_state();
+    std::vector<double> local_values(order_count, 0.0);
+    std::vector<double> gathered_values;
+    Array<double,2> dT(Nx,Nz);
+    if (rank_mpi == 0) gathered_values.resize(order_count*P, 0.0);
+    if (rank_mpi == 0) cout << "[fastSF] 2D scalar workload: " << p_per_proc << " displacement offsets across q=" << q1 << ".." << q2 << endl;
+    if (p_per_proc > 0) print_progress_start("2D scalar SF", p_per_proc, idx(0, 0, rank_mpi), -1, idx(0, 1, rank_mpi));
     for (int ix=0; ix<p_per_proc; ix++){
         int x=idx(ix, 0, rank_mpi), z=idx(ix, 1, rank_mpi);
-        int cnt=(Nx-x)*(Nz-z); Array<double,2> dT(Nx-x,Nz-z);
-        dT = T(Range(x,Nx-1),Range(z,Nz-1)) - T(Range(0,Nx-x-1),Range(0,Nz-z-1));
-        for (int p=0; p<=q2-q1; p++){
-            double St = sum(pow(dT,q1+p))/cnt;
-            Array<int, 1> X(P), Z(P), p_arr(P); Array<double, 1> St_arr(P);
-            MPI_Gather(&x, 1, MPI_INT, X.data(), 1, MPI_INT, 0, MPI_COMM_WORLD); MPI_Gather(&z, 1, MPI_INT, Z.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
-            MPI_Gather(&St, 1, MPI_DOUBLE, St_arr.data(), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD); MPI_Gather(&p, 1, MPI_INT, p_arr.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
-            if (rank_mpi==0) for (int i=0; i<P; i++) SF_Grid2D_scalar(X(i),Z(i),p_arr(i))=St_arr(i);
+        if (x == 0 && z == 0) {
+            std::fill(local_values.begin(), local_values.end(), 0.0);
+            // Historical behavior evaluated zero lag through the full temporary-array path below and
+            // then overwrote the stored origin with zero. Keep the old nonzero-lag path intact, but
+            // bypass the redundant local math here while preserving the root-visible output indices.
+            MPI_Gather(local_values.data(), static_cast<int>(local_values.size()), MPI_DOUBLE,
+                       rank_mpi == 0 ? gathered_values.data() : NULL,
+                       static_cast<int>(local_values.size()), MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            if (rank_mpi==0) {
+                for (int rank_id=0; rank_id<P; rank_id++) {
+                    int x_rank = idx(ix, 0, rank_id), z_rank = idx(ix, 1, rank_id);
+                    for (int p=0; p<order_count; p++) SF_Grid2D_scalar(x_rank,z_rank,p)=gathered_values[rank_id*order_count+p];
+                }
+            }
+            print_loop_progress("2D scalar SF", ix + 1, p_per_proc, progress, x, -1, z);
+            continue;
         }
+        int cnt=(Nx-x)*(Nz-z); Range rx(0,Nx-x-1), rz(0,Nz-z-1);
+        dT(rx,rz) = T(Range(x,Nx-1),Range(z,Nz-1)) - T(Range(0,Nx-x-1),Range(0,Nz-z-1));
+        for (int p=0; p<=q2-q1; p++){
+            int q_order = q1 + p;
+            local_values[p] = normalized_moment(dT(rx,rz), q_order, cnt);
+        }
+        MPI_Gather(local_values.data(), static_cast<int>(local_values.size()), MPI_DOUBLE,
+                   rank_mpi == 0 ? gathered_values.data() : NULL,
+                   static_cast<int>(local_values.size()), MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        if (rank_mpi==0) {
+            for (int rank_id=0; rank_id<P; rank_id++) {
+                int x_rank = idx(ix, 0, rank_id), z_rank = idx(ix, 1, rank_id);
+                for (int p=0; p<order_count; p++) SF_Grid2D_scalar(x_rank,z_rank,p)=gathered_values[rank_id*order_count+p];
+            }
+        }
+        print_loop_progress("2D scalar SF", ix + 1, p_per_proc, progress, x, -1, z);
     }
     if (rank_mpi==0) SF_Grid2D_scalar(0,0,Range::all())=0;
 }

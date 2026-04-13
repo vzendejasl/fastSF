@@ -3,7 +3,23 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 
-def plot_structure_functions(file_path="SF_Grid_pll.h5", orders=[3, 5, 7], domain_size=1.0):
+def default_structure_function_path():
+    candidates = [
+        "SF_Grid_pll.h5",
+        os.path.join("out", "SF_Grid_pll.h5"),
+    ]
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+    for root, _, files in os.walk("."):
+        if "SF_Grid_pll.h5" in files:
+            return os.path.join(root, "SF_Grid_pll.h5")
+    return "SF_Grid_pll.h5"
+
+
+def plot_structure_functions(file_path=None, orders=[3, 5, 7], domain_size=1.0):
+    if file_path is None:
+        file_path = default_structure_function_path()
     if not os.path.exists(file_path):
         print(f"Error: {file_path} not found. Run fastSF first!")
         return
@@ -74,10 +90,10 @@ def plot_structure_functions(file_path="SF_Grid_pll.h5", orders=[3, 5, 7], domai
     plt.legend(fontsize=12)
     plt.grid(True, which="both", ls="-", alpha=0.3)
     
-    output_name = "SF_comparison.png"
+    output_name = os.path.join(os.path.dirname(file_path) or ".", "SF_comparison.png")
     plt.savefig(output_name, dpi=300)
     print(f"Success! Plot saved as {output_name}")
     plt.show()
 
 if __name__ == "__main__":
-    plot_structure_functions(orders=[3, 5, 7], domain_size=1.0)
+    plot_structure_functions(file_path=default_structure_function_path(), orders=[3, 5, 7], domain_size=1.0)
