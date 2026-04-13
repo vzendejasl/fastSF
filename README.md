@@ -128,6 +128,26 @@ Finally, for visualization purpose, the python script `test/test.py` is invoked.
 2. `numpy`
 3. `matplotlib`
 
+## Maintainer Performance Notes
+
+The current code base contains one deferred-communication refactor that has not yet been propagated everywhere.
+
+1. The `3D velocity + longitudinal-only` kernel now computes all locally assigned lag offsets first and performs one deferred packed `MPI_Gather` after the hot loop.
+2. The older immediate-gather logic is still preserved as rollback reference comments in `src/fastSF.cc`.
+3. The same deferred-gather pattern still needs to be applied to the remaining kernels:
+   `SFunc3D`, `SFunc_long_2D`, `SFunc2D`, `SF_scalar_3D`, and `SF_scalar_2D`.
+
+Regression coverage for this path now includes:
+
+1. `src/test_longitudinal_batch_unit.out` for packed-buffer indexing and root-side unpacking.
+2. `test/test_velocity_3D_longitudinal` in `runTest.sh` for the `3D velocity + longitudinal-only` branch.
+
+If further runtime reduction is needed for production `3D` cases, the next likely code-level targets are:
+
+1. Propagate the deferred-gather pattern to the remaining kernels listed above.
+2. Revisit the MPI work decomposition. The current `3D` implementation splits work over `x` and `y` lag indices only; each rank still sweeps all assigned `z` offsets locally.
+3. If scaling is still inadequate, redesign the `3D` work partitioning so `z` lag blocks are distributed as well, which would require new index-list construction and new root-side reconstruction logic.
+
 
 ## Detailed instruction for running `fastSF`
 

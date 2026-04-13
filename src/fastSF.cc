@@ -9,6 +9,7 @@
 
 #include "h5si.h"
 #include "input_utils.h"
+#include "longitudinal_batch_utils.h"
 #include <yaml-cpp/yaml.h>
 #include <iostream>
 #include <fstream>
@@ -1545,35 +1546,29 @@ if (rank_mpi==0) cout<<"\nComputing longitudinal S(lx, ly, lz) using 3D velocity
     int c_per_proc = Nx*Ny/(4*P); Array<int, 3> idx; compute_index_list(idx, Nx, Ny);
     int total_offsets = c_per_proc * (Nz/2);
     int order_count = q2-q1+1;
+    int packed_value_count = total_offsets * order_count;
     ProgressState progress = make_progress_state();
-    std::vector<double> local_values(order_count, 0.0);
+    std::vector<double> packed_local_values(packed_value_count, 0.0);
     std::vector<double> gathered_values;
     Array<double,3> dUx(Nx,Ny,Nz), dUy(Nx,Ny,Nz), dUz(Nx,Ny,Nz), dUpll(Nx,Ny,Nz);
-    if (rank_mpi == 0) gathered_values.resize(order_count*P, 0.0);
+    if (rank_mpi == 0) gathered_values.resize(packed_value_count*P, 0.0);
     if (rank_mpi == 0) cout << "[fastSF] 3D longitudinal workload: " << total_offsets << " displacement offsets across q=" << q1 << ".." << q2 << endl;
     if (c_per_proc > 0) print_progress_start("3D longitudinal SF", total_offsets, idx(0, 0, rank_mpi), idx(0, 1, rank_mpi), 0);
     for (int ix=0; ix<c_per_proc; ix++){
         int x=idx(ix, 0, rank_mpi), y=idx(ix, 1, rank_mpi);
   		for(int z=0; z<Nz/2; z++){
             bool first_offset = (ix == 0 && z == 0);
+            int offset_index = ix*(Nz/2) + z;
             print_offset_stage("3D longitudinal SF", first_offset ? "starting first lag-offset evaluation" : "still sweeping lag offsets", progress, x, y, z, first_offset);
             if (x == 0 && y == 0 && z == 0) {
-                std::fill(local_values.begin(), local_values.end(), 0.0);
                 // Historical behavior evaluated zero lag through the full temporary-array path below and
                 // then overwrote the stored origin with zero. Keep the old nonzero-lag path intact, but
-                // bypass the redundant local math here while preserving the root-visible output indices.
-                print_offset_stage("3D longitudinal SF", "zero lag detected; bypassing temporary-array reductions and sending exact zeros", progress, x, y, z, true);
-                print_offset_stage("3D longitudinal SF", "gathering all requested q-orders for zero lag in one MPI_Gather", progress, x, y, z, true);
-                MPI_Gather(local_values.data(), static_cast<int>(local_values.size()), MPI_DOUBLE,
-                           rank_mpi == 0 ? gathered_values.data() : NULL,
-                           static_cast<int>(local_values.size()), MPI_DOUBLE, 0, MPI_COMM_WORLD);
-                if (rank_mpi==0) {
-                    for (int rank_id=0; rank_id<P; rank_id++) {
-                        int x_rank = idx(ix, 0, rank_id), y_rank = idx(ix, 1, rank_id);
-                        for (int p=0; p<order_count; p++) SF_Grid_pll(x_rank,y_rank,z,p)=gathered_values[rank_id*order_count+p];
-                    }
+                // bypass the redundant local math here while preserving the exact zero-valued output slot.
+                print_offset_stage("3D longitudinal SF", "zero lag detected; buffering exact zeros for deferred gather", progress, x, y, z, true);
+                for (int p=0; p<order_count; p++) {
+                    packed_local_values[packed_longitudinal_3d_value_index(ix, z, p, Nz/2, order_count)] = 0.0;
                 }
-                print_loop_progress("3D longitudinal SF", ix*(Nz/2) + z + 1, total_offsets, progress, x, y, z);
+                print_loop_progress("3D longitudinal SF", offset_index + 1, total_offsets, progress, x, y, z);
                 continue;
             }
     		int cnt=(Nx-x)*(Ny-y)*(Nz-z); double lx=x*dx, ly=y*dy, lz=z*dz, r=sqrt(lx*lx+ly*ly+lz*lz); if (r<1e-15) r=1e-15;
@@ -1583,25 +1578,36 @@ if (rank_mpi==0) cout<<"\nComputing longitudinal S(lx, ly, lz) using 3D velocity
     		dUz(rx,ry,rz) = Uz(Range(x,Nx-1),Range(y,Ny-1),Range(z,Nz-1)) - Uz(Range(0,Nx-x-1),Range(0,Ny-y-1),Range(0,Nz-z-1));
             print_offset_stage("3D longitudinal SF", "computed velocity differences; projecting longitudinal component", progress, x, y, z, first_offset);
             dUpll(rx,ry,rz) = (lx*dUx(rx,ry,rz)+ly*dUy(rx,ry,rz)+lz*dUz(rx,ry,rz))/r;
-            print_offset_stage("3D longitudinal SF", "reducing requested q-orders and gathering rank results", progress, x, y, z, first_offset);
+            print_offset_stage("3D longitudinal SF", "reducing requested q-orders and buffering local results", progress, x, y, z, first_offset);
     		for (int p=0; p<=q2-q1; p++){
                 int q_order = q1 + p;
                 print_q_stage("3D longitudinal SF", "starting local reduction for order", progress, x, y, z, q_order, first_offset);
-    			local_values[p] = normalized_moment(dUpll(rx,ry,rz), q_order, cnt);
+    			packed_local_values[packed_longitudinal_3d_value_index(ix, z, p, Nz/2, order_count)] =
+                    normalized_moment(dUpll(rx,ry,rz), q_order, cnt);
     		}
-            print_offset_stage("3D longitudinal SF", "completed local reductions; gathering all requested q-orders for this lag offset", progress, x, y, z, first_offset);
-            MPI_Gather(local_values.data(), static_cast<int>(local_values.size()), MPI_DOUBLE,
-                       rank_mpi == 0 ? gathered_values.data() : NULL,
-                       static_cast<int>(local_values.size()), MPI_DOUBLE, 0, MPI_COMM_WORLD);
-            if (rank_mpi==0) {
-                for (int rank_id=0; rank_id<P; rank_id++) {
-                    int x_rank = idx(ix, 0, rank_id), y_rank = idx(ix, 1, rank_id);
-                    for (int p=0; p<order_count; p++) SF_Grid_pll(x_rank,y_rank,z,p)=gathered_values[rank_id*order_count+p];
-                }
-            }
-            print_loop_progress("3D longitudinal SF", ix*(Nz/2) + z + 1, total_offsets, progress, x, y, z);
+            print_loop_progress("3D longitudinal SF", offset_index + 1, total_offsets, progress, x, y, z);
   		}
   	}
+    print_stage("3D longitudinal SF local sweep complete; gathering packed lag buffers...");
+    /*
+     * Legacy immediate-gather path kept here for rollback reference:
+     *
+     * MPI_Gather(local_values.data(), static_cast<int>(local_values.size()), MPI_DOUBLE,
+     *            rank_mpi == 0 ? gathered_values.data() : NULL,
+     *            static_cast<int>(local_values.size()), MPI_DOUBLE, 0, MPI_COMM_WORLD);
+     * if (rank_mpi==0) {
+     *     for (int rank_id=0; rank_id<P; rank_id++) {
+     *         int x_rank = idx(ix, 0, rank_id), y_rank = idx(ix, 1, rank_id);
+     *         for (int p=0; p<order_count; p++) SF_Grid_pll(x_rank,y_rank,z,p)=gathered_values[rank_id*order_count+p];
+     *     }
+     * }
+     */
+    MPI_Gather(packed_local_values.empty() ? NULL : packed_local_values.data(), packed_value_count, MPI_DOUBLE,
+               rank_mpi == 0 ? (gathered_values.empty() ? NULL : gathered_values.data()) : NULL,
+               packed_value_count, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    if (rank_mpi==0) {
+        unpack_longitudinal_3d_gathered_values(gathered_values, idx, P, c_per_proc, Nz/2, order_count, SF_Grid_pll);
+    }
     if (rank_mpi==0) SF_Grid_pll(0,0,0,Range::all())=0;
 }
 

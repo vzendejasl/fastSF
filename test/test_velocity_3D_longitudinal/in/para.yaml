@@ -1,8 +1,15 @@
+#PARAMETERS FOR COMPUTING THE STRUCTURE FUNCTIONS"
+
 program:
     scalar_switch: false
     2D_switch : false
     Only_longitudinal: true
-    Processors_X: 4
+    Processors_X: 1
+
+grid :
+    Nx : 32
+    Ny : 32
+    Nz : 32
 
 domain_dimension :
     Lx : 1.0
@@ -10,8 +17,8 @@ domain_dimension :
     Lz : 1.0
 
 structure_function :
-    q1 : 2
-    q2 : 3
+    q1 : 1
+    q2 : 4
 
 test :
-    test_switch : false
+    test_switch : true

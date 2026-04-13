@@ -57,7 +57,7 @@ CXXFLAGS ?= -std=c++11 -O3 -DH5SI_ENABLE_MPI -DH5SI_ENABLE_MPI
 ifeq ($(USE_NATIVE_ARCH),1)
 CXXFLAGS += $(NATIVE_ARCH_FLAGS)
 endif
-SRCS := fastSF.cc input_utils.cc
+SRCS := fastSF.cc input_utils.cc longitudinal_batch_utils.cc
 
 ifneq ($(strip $(H5SI_ROOT)),)
 CPPFLAGS += -I$(H5SI_ROOT)/include
@@ -80,3 +80,6 @@ Structure: $(SRCS)
 
 test_input_unit.out: input_utils.cc ../test/test_input_unit.cc
 	$(MPICXX) -std=c++11 $(CPPFLAGS) input_utils.cc ../test/test_input_unit.cc -o test_input_unit.out
+
+test_longitudinal_batch_unit.out: longitudinal_batch_utils.cc ../test/test_longitudinal_batch_unit.cc
+	$(MPICXX) -std=c++11 $(CPPFLAGS) longitudinal_batch_utils.cc ../test/test_longitudinal_batch_unit.cc $(LDLIBS) -o test_longitudinal_batch_unit.out

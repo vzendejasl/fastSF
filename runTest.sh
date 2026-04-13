@@ -66,6 +66,7 @@ run_case test_velocity_2D
 
 run_case test_scalar_3D
 run_case test_velocity_3D
+run_case test_velocity_3D_longitudinal
 
 echo "Running TPP format tests..."
 ./test_tpp_all.sh
