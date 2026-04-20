@@ -101,6 +101,9 @@ void write_parallel_scalar_h5(const string& h5_path, const string& field_path, c
 bool axis_has_periodic_duplicate(const std::vector<double>& axis, double domain_length);
 std::vector<double> trim_periodic_axis(const std::vector<double>& axis, double domain_length);
 bool read_bool_attribute(hid_t object_id, const std::string& name, bool default_value);
+bool load_dedalus_grid_spacing(const string& h5_path, const string& dataset_spec);
+bool is_dedalus_velocity_h5(const string& h5_path);
+bool infer_input_dataset_shape(hid_t file_id, const string& dataset_spec, int& spatial_rank, hsize_t& nx, hsize_t& ny, hsize_t& nz, bool& is_two_d);
 void print_stage(const std::string& message);
 struct ProgressState {
     int next_percent;
@@ -120,6 +123,12 @@ void print_run_summary();
 void configure_output_location(const std::string& input_path);
 void ensure_directory_exists(const std::string& dir_path);
 std::string output_file_path(const std::string& file_stem);
+
+struct DatasetReadSpec {
+    std::string dataset_path;
+    int component_index;
+    bool has_component_index;
+};
 
 // Global variables
 Array <double,3> T, V1, V2, V3;
@@ -356,7 +365,94 @@ std::string output_file_path(const std::string& file_stem) {
 }
 
 bool h5_path_exists(hid_t object_id, const string& path) {
-    return H5Lexists(object_id, path.c_str(), H5P_DEFAULT) > 0;
+    htri_t exists = 0;
+    H5E_BEGIN_TRY
+        exists = H5Lexists(object_id, path.c_str(), H5P_DEFAULT);
+    H5E_END_TRY
+    return exists > 0;
+}
+
+DatasetReadSpec parse_dataset_read_spec(const std::string& dataset_spec) {
+    DatasetReadSpec spec;
+    spec.dataset_path = dataset_spec;
+    spec.component_index = -1;
+    spec.has_component_index = false;
+
+    std::size_t open = dataset_spec.find_last_of('[');
+    if (open == std::string::npos || dataset_spec.empty() || dataset_spec[dataset_spec.size() - 1] != ']') return spec;
+
+    std::string digits = dataset_spec.substr(open + 1, dataset_spec.size() - open - 2);
+    if (digits.empty()) return spec;
+    for (std::size_t i = 0; i < digits.size(); ++i) {
+        if (!std::isdigit(static_cast<unsigned char>(digits[i]))) return spec;
+    }
+
+    spec.dataset_path = dataset_spec.substr(0, open);
+    spec.component_index = std::atoi(digits.c_str());
+    spec.has_component_index = true;
+    return spec;
+}
+
+bool using_default_velocity_dataset_names() {
+    return (UdName == "U.V1r" || UdName == "fields/vx") &&
+           (VdName == "U.V2r" || VdName == "fields/vy") &&
+           (WdName == "U.V3r" || WdName == "fields/vz");
+}
+
+bool is_dedalus_task_dataset(hid_t file_id, hid_t dset_id, const DatasetReadSpec& spec) {
+    if (!h5_path_exists(file_id, "/scales")) return false;
+    if (H5Aexists(dset_id, "DIMENSION_LIST") <= 0) return false;
+    return spec.dataset_path == "tasks/u" || spec.dataset_path == "/tasks/u" ||
+           spec.dataset_path.find("tasks/") == 0 || spec.dataset_path.find("/tasks/") == 0;
+}
+
+bool read_dedalus_dimension_scale(hid_t dset_id, int dim_index, std::string& scale_path, std::vector<double>& values) {
+    hid_t attr_id = H5Aopen(dset_id, "DIMENSION_LIST", H5P_DEFAULT);
+    if (attr_id < 0) return false;
+
+    hid_t type_id = H5Aget_type(attr_id);
+    hid_t space_id = H5Aget_space(attr_id);
+    int rank = H5Sget_simple_extent_ndims(space_id);
+    hsize_t dims[1] = {0};
+    if (rank != 1 || H5Sget_simple_extent_dims(space_id, dims, NULL) < 0 || dim_index < 0 || dim_index >= static_cast<int>(dims[0])) {
+        H5Sclose(space_id);
+        H5Tclose(type_id);
+        H5Aclose(attr_id);
+        return false;
+    }
+
+    std::vector<hvl_t> refs(dims[0]);
+    bool ok = false;
+    if (H5Aread(attr_id, type_id, refs.empty() ? NULL : &refs[0]) >= 0) {
+        hvl_t entry = refs[dim_index];
+        if (entry.len > 0 && entry.p != NULL) {
+            hobj_ref_t* obj_refs = static_cast<hobj_ref_t*>(entry.p);
+            hid_t scale_id = H5Rdereference2(attr_id, H5P_DEFAULT, H5R_OBJECT, &obj_refs[0]);
+            if (scale_id >= 0) {
+                char name_buf[512];
+                ssize_t name_len = H5Iget_name(scale_id, name_buf, sizeof(name_buf));
+                if (name_len > 0) scale_path.assign(name_buf, static_cast<std::size_t>(name_len));
+
+                hid_t scale_space = H5Dget_space(scale_id);
+                int scale_rank = H5Sget_simple_extent_ndims(scale_space);
+                if (scale_rank == 1) {
+                    hsize_t scale_dims[1] = {0};
+                    if (H5Sget_simple_extent_dims(scale_space, scale_dims, NULL) >= 0) {
+                        values.resize(scale_dims[0], 0.0);
+                        if (H5Dread(scale_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, values.empty() ? NULL : &values[0]) >= 0) ok = true;
+                    }
+                }
+                H5Sclose(scale_space);
+                H5Dclose(scale_id);
+            }
+        }
+    }
+
+    H5Dvlen_reclaim(type_id, space_id, H5P_DEFAULT, refs.empty() ? NULL : &refs[0]);
+    H5Sclose(space_id);
+    H5Tclose(type_id);
+    H5Aclose(attr_id);
+    return ok;
 }
 
 void write_string_attribute(hid_t object_id, const string& name, const string& value) {
@@ -450,6 +546,88 @@ bool is_structured_velocity_h5(const string& h5_path) {
     return ok;
 }
 
+bool infer_input_dataset_shape(hid_t file_id, const string& dataset_spec, int& spatial_rank, hsize_t& nx, hsize_t& ny, hsize_t& nz, bool& is_two_d) {
+    DatasetReadSpec spec = parse_dataset_read_spec(dataset_spec);
+    hid_t dset_id = H5Dopen2(file_id, spec.dataset_path.c_str(), H5P_DEFAULT);
+    if (dset_id < 0) return false;
+
+    hid_t space_id = H5Dget_space(dset_id);
+    int rank = H5Sget_simple_extent_ndims(space_id);
+    std::vector<hsize_t> dims(rank, 1);
+    H5Sget_simple_extent_dims(space_id, dims.empty() ? NULL : &dims[0], NULL);
+    bool dedalus_style = is_dedalus_task_dataset(file_id, dset_id, spec);
+    bool ok = true;
+
+    if (spec.has_component_index) {
+        if (rank == 4 && dedalus_style && dims[1] > static_cast<hsize_t>(spec.component_index)) {
+            spatial_rank = 2;
+            nx = dims[2];
+            ny = 1;
+            nz = dims[3];
+            is_two_d = true;
+        } else if (rank == 5 && dedalus_style && dims[1] > static_cast<hsize_t>(spec.component_index)) {
+            spatial_rank = 3;
+            nx = dims[2];
+            ny = dims[3];
+            nz = dims[4];
+            is_two_d = false;
+        } else {
+            ok = false;
+        }
+    } else if (rank == 2) {
+        spatial_rank = 2;
+        nx = dims[0];
+        ny = 1;
+        nz = dims[1];
+        is_two_d = true;
+    } else if (rank == 3) {
+        if (dedalus_style && dims[0] >= 1) {
+            spatial_rank = 2;
+            nx = dims[1];
+            ny = 1;
+            nz = dims[2];
+            is_two_d = true;
+        } else if (dims[1] == 1) {
+            spatial_rank = 2;
+            nx = dims[0];
+            ny = 1;
+            nz = dims[2];
+            is_two_d = true;
+        } else {
+            spatial_rank = 3;
+            nx = dims[0];
+            ny = dims[1];
+            nz = dims[2];
+            is_two_d = false;
+        }
+    } else if (rank == 4 && dedalus_style) {
+        spatial_rank = 3;
+        nx = dims[1];
+        ny = dims[2];
+        nz = dims[3];
+        is_two_d = false;
+    } else {
+        ok = false;
+    }
+
+    H5Sclose(space_id);
+    H5Dclose(dset_id);
+    return ok;
+}
+
+bool is_dedalus_velocity_h5(const string& h5_path) {
+    hid_t file_id = H5Fopen(h5_path.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file_id < 0) return false;
+    int spatial_rank = 0;
+    hsize_t nx = 0, ny = 0, nz = 0;
+    bool is_two_d = false;
+    bool ok = h5_path_exists(file_id, "/tasks/u") &&
+              infer_input_dataset_shape(file_id, "/tasks/u[0]", spatial_rank, nx, ny, nz, is_two_d) &&
+              ((spatial_rank == 3 && !is_two_d) || (spatial_rank == 2 && is_two_d));
+    H5Fclose(file_id);
+    return ok;
+}
+
 bool is_structured_scalar_h5(const string& h5_path, string& field_path) {
     hid_t file_id = H5Fopen(h5_path.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
     if (file_id < 0) return false;
@@ -508,6 +686,61 @@ bool load_structured_grid_spacing(const string& h5_path) {
     Lx = (x_grid.size() > 1) ? (x_grid.back() - x_grid.front()) : 0.0;
     Ly = (y_grid.size() > 1) ? (y_grid.back() - y_grid.front()) : 0.0;
     Lz = (z_grid.size() > 1) ? (z_grid.back() - z_grid.front()) : 0.0;
+    return true;
+}
+
+bool load_dedalus_grid_spacing(const string& h5_path, const string& dataset_spec) {
+    hid_t file_id = H5Fopen(h5_path.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file_id < 0) return false;
+
+    DatasetReadSpec spec = parse_dataset_read_spec(dataset_spec);
+    hid_t dset_id = H5Dopen2(file_id, spec.dataset_path.c_str(), H5P_DEFAULT);
+    if (dset_id < 0) {
+        H5Fclose(file_id);
+        return false;
+    }
+
+    if (!is_dedalus_task_dataset(file_id, dset_id, spec)) {
+        H5Dclose(dset_id);
+        H5Fclose(file_id);
+        return false;
+    }
+
+    hid_t space_id = H5Dget_space(dset_id);
+    int rank = H5Sget_simple_extent_ndims(space_id);
+    int spatial_start = spec.has_component_index ? 2 : 1;
+    std::vector<double> x_grid, y_grid, z_grid;
+    bool ok = true;
+
+    for (int dim = spatial_start; ok && dim < rank; ++dim) {
+        std::string scale_path;
+        std::vector<double> values;
+        if (!read_dedalus_dimension_scale(dset_id, dim, scale_path, values)) {
+            ok = false;
+            break;
+        }
+
+        std::string leaf = dataset_leaf_name(scale_path, "");
+        char axis = leaf.empty() ? '\0' : static_cast<char>(std::tolower(static_cast<unsigned char>(leaf[0])));
+        if (axis == 'x') x_grid = values;
+        else if (axis == 'y') y_grid = values;
+        else if (axis == 'z') z_grid = values;
+    }
+
+    H5Sclose(space_id);
+    H5Dclose(dset_id);
+    H5Fclose(file_id);
+
+    if (!ok || x_grid.empty() || z_grid.empty()) return false;
+    if (y_grid.empty()) y_grid.push_back(0.0);
+
+    Nx = static_cast<int>(x_grid.size());
+    Ny = static_cast<int>(y_grid.size());
+    Nz = static_cast<int>(z_grid.size());
+    two_dimension_switch = (Ny <= 1);
+    dx = validate_uniform_axis(x_grid, "x");
+    dy = validate_uniform_axis(y_grid, "y");
+    dz = validate_uniform_axis(z_grid, "z");
     return true;
 }
 
@@ -1107,10 +1340,15 @@ void prepare_velocity_inputs() {
         UName = source.path_without_extension;
         VName = source.path_without_extension;
         WName = source.path_without_extension;
-        if (is_structured_velocity_h5(source.full_path) && UdName == "U.V1r" && VdName == "U.V2r" && WdName == "U.V3r") {
+        if (is_structured_velocity_h5(source.full_path) && using_default_velocity_dataset_names()) {
             UdName = "fields/vx";
             VdName = "fields/vy";
             WdName = "fields/vz";
+        } else if (is_dedalus_velocity_h5(source.full_path) && using_default_velocity_dataset_names()) {
+            print_stage("Detected Dedalus single-file velocity dataset.");
+            UdName = "tasks/u[0]";
+            VdName = "tasks/u[1]";
+            WdName = "tasks/u[2]";
         }
         return;
     }
@@ -1171,13 +1409,18 @@ void get_input_shape(string fold, string file, string dset, Array<int,1>& s){
             two_dimension_switch = (Ny <= 1);
             s(0)=two_dimension_switch ? 2 : 3; s(1)=Nx; s(2)=Ny; s(3)=Nz;
         } else {
-            h5::File f(fold+file+".h5", "r");
-            h5::Dataset ds = f[dset];
-            int dim = ds.shape().size();
-            if (dim==2){ two_dimension_switch=true; Nx=ds.shape()[0]; Ny=1; Nz=ds.shape()[1]; }
-            else if (dim==3 && ds.shape()[1] == 1) { two_dimension_switch=true; Nx=ds.shape()[0]; Ny=1; Nz=ds.shape()[2]; }
-            else { two_dimension_switch=false; Nx=ds.shape()[0]; Ny=ds.shape()[1]; Nz=ds.shape()[2]; }
-            s(0)=dim; s(1)=Nx; s(2)=Ny; s(3)=Nz;
+            int spatial_rank = 0;
+            hsize_t nx = 0, ny = 0, nz = 0;
+            bool is_two_d = false;
+            if (!infer_input_dataset_shape(file_id, dset, spatial_rank, nx, ny, nz, is_two_d)) {
+                H5Fclose(file_id);
+                throw std::runtime_error("Unsupported dataset rank for input shape detection: " + dset);
+            }
+            two_dimension_switch = is_two_d;
+            Nx = static_cast<int>(nx);
+            Ny = static_cast<int>(ny);
+            Nz = static_cast<int>(nz);
+            s(0)=spatial_rank; s(1)=Nx; s(2)=Ny; s(3)=Nz;
         }
         H5Fclose(file_id);
   	} else {
@@ -1201,18 +1444,18 @@ void Read_fields() {
         print_stage("Reading input field data from HDF5...");
         Array<int,1> s1,s2, s3;
         if (two_dimension_switch){
-            if (scalar_switch) { get_input_shape("", TName, TdName, s1); resize_input(); if (!load_structured_grid_spacing(TName+".h5")) calculate_grid_spacing(); read_2D(T_2D,"", TName, TdName); }
+            if (scalar_switch) { get_input_shape("", TName, TdName, s1); resize_input(); if (!load_structured_grid_spacing(TName+".h5") && !load_dedalus_grid_spacing(TName+".h5", TdName)) calculate_grid_spacing(); read_2D(T_2D,"", TName, TdName); }
             else { 
                 get_input_shape("", UName, UdName, s1); get_input_shape("", WName, WdName, s2);
                 if (!compare(s1,s2)) { if (rank_mpi==0) cerr<<"\nIncompatible dimension data\n\n"; h5::finalize(); finalize_mpi_runtime(); exit(1); }
-                resize_input(); if (!load_structured_grid_spacing(UName+".h5")) calculate_grid_spacing(); read_2D(V1_2D,"", UName, UdName); read_2D(V3_2D,"", WName, WdName);
+                resize_input(); if (!load_structured_grid_spacing(UName+".h5") && !load_dedalus_grid_spacing(UName+".h5", UdName)) calculate_grid_spacing(); read_2D(V1_2D,"", UName, UdName); read_2D(V3_2D,"", WName, WdName);
             }
         } else {
-            if (scalar_switch) { get_input_shape("", TName, TdName, s1); resize_input(); if (!load_structured_grid_spacing(TName+".h5")) calculate_grid_spacing(); read_3D(T, "", TName, TdName); }
+            if (scalar_switch) { get_input_shape("", TName, TdName, s1); resize_input(); if (!load_structured_grid_spacing(TName+".h5") && !load_dedalus_grid_spacing(TName+".h5", TdName)) calculate_grid_spacing(); read_3D(T, "", TName, TdName); }
             else {
             	get_input_shape("", UName, UdName, s1); get_input_shape("", VName, VdName, s2); get_input_shape("", WName, WdName, s3);
             	if (!compare(s1,s2) || !compare(s2,s3)) { if (rank_mpi==0) cerr<<"\nIncompatible dimension data\n\n"; h5::finalize(); finalize_mpi_runtime(); exit(1); }
-            	resize_input(); if (!load_structured_grid_spacing(UName+".h5")) calculate_grid_spacing(); read_3D(V1, "", UName, UdName); read_3D(V2, "", VName, VdName); read_3D(V3, "", WName, WdName);
+                resize_input(); if (!load_structured_grid_spacing(UName+".h5") && !load_dedalus_grid_spacing(UName+".h5", UdName)) calculate_grid_spacing(); read_3D(V1, "", UName, UdName); read_3D(V2, "", VName, VdName); read_3D(V3, "", WName, WdName);
             }
         }
     } else {
@@ -1389,13 +1632,35 @@ void write_3D(Array<double,3> A, string file) {
 void show_checklist(){ if (rank_mpi==0) cerr<<"Error: Check inputs in 'in/' folder.\n"; }
 void read_2D(Array<double,2> A, string fold, string file, string dset) {
     string path = fold+file+".h5";
+    DatasetReadSpec spec = parse_dataset_read_spec(dset);
     hid_t file_id = H5Fopen(path.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
-    hid_t dset_id = H5Dopen2(file_id, dset.c_str(), H5P_DEFAULT);
+    hid_t dset_id = H5Dopen2(file_id, spec.dataset_path.c_str(), H5P_DEFAULT);
     hid_t space_id = H5Dget_space(dset_id);
     int rank = H5Sget_simple_extent_ndims(space_id);
     std::vector<hsize_t> dims(rank, 1);
     H5Sget_simple_extent_dims(space_id, &dims[0], NULL);
-    if (rank == 2 && dims[0] == static_cast<hsize_t>(A.extent(0)) && dims[1] == static_cast<hsize_t>(A.extent(1))) {
+    bool dedalus_style = is_dedalus_task_dataset(file_id, dset_id, spec);
+    if (spec.has_component_index && dedalus_style && rank == 4 && dims[1] > static_cast<hsize_t>(spec.component_index) &&
+        dims[2] >= static_cast<hsize_t>(A.extent(0)) && dims[3] >= static_cast<hsize_t>(A.extent(1))) {
+        hsize_t start[4] = {0, static_cast<hsize_t>(spec.component_index), 0, 0};
+        hsize_t count[4] = {1, 1, static_cast<hsize_t>(A.extent(0)), static_cast<hsize_t>(A.extent(1))};
+        H5Sselect_hyperslab(space_id, H5S_SELECT_SET, start, NULL, count, NULL);
+        hid_t mem_space = H5Screate_simple(4, count, NULL);
+        std::vector<double> tmp(static_cast<std::size_t>(A.extent(0)) * A.extent(1), 0.0);
+        H5Dread(dset_id, H5T_NATIVE_DOUBLE, mem_space, space_id, H5P_DEFAULT, tmp.empty() ? NULL : &tmp[0]);
+        for (int i=0; i<A.extent(0); ++i) for (int k=0; k<A.extent(1); ++k) A(i,k) = tmp[i*A.extent(1) + k];
+        H5Sclose(mem_space);
+    } else if (!spec.has_component_index && dedalus_style && rank == 3 &&
+        dims[1] >= static_cast<hsize_t>(A.extent(0)) && dims[2] >= static_cast<hsize_t>(A.extent(1))) {
+        hsize_t start[3] = {0, 0, 0};
+        hsize_t count[3] = {1, static_cast<hsize_t>(A.extent(0)), static_cast<hsize_t>(A.extent(1))};
+        H5Sselect_hyperslab(space_id, H5S_SELECT_SET, start, NULL, count, NULL);
+        hid_t mem_space = H5Screate_simple(3, count, NULL);
+        std::vector<double> tmp(static_cast<std::size_t>(A.extent(0)) * A.extent(1), 0.0);
+        H5Dread(dset_id, H5T_NATIVE_DOUBLE, mem_space, space_id, H5P_DEFAULT, tmp.empty() ? NULL : &tmp[0]);
+        for (int i=0; i<A.extent(0); ++i) for (int k=0; k<A.extent(1); ++k) A(i,k) = tmp[i*A.extent(1) + k];
+        H5Sclose(mem_space);
+    } else if (rank == 2 && dims[0] == static_cast<hsize_t>(A.extent(0)) && dims[1] == static_cast<hsize_t>(A.extent(1))) {
         H5Dread(dset_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, A.data());
     } else if (rank == 3 && dims[0] >= static_cast<hsize_t>(A.extent(0)) && dims[2] >= static_cast<hsize_t>(A.extent(1))) {
         hsize_t start[3] = {0, 0, 0};
@@ -1418,14 +1683,32 @@ void read_2D(Array<double,2> A, string fold, string file, string dset) {
 }
 void read_3D(Array<double,3> A, string fold, string file, string dset) {
     string path = fold+file+".h5";
+    DatasetReadSpec spec = parse_dataset_read_spec(dset);
     hid_t file_id = H5Fopen(path.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
-    hid_t dset_id = H5Dopen2(file_id, dset.c_str(), H5P_DEFAULT);
+    hid_t dset_id = H5Dopen2(file_id, spec.dataset_path.c_str(), H5P_DEFAULT);
     hid_t space_id = H5Dget_space(dset_id);
     int rank = H5Sget_simple_extent_ndims(space_id);
     std::vector<hsize_t> dims(rank, 1);
     H5Sget_simple_extent_dims(space_id, &dims[0], NULL);
     hsize_t count[3] = {static_cast<hsize_t>(A.extent(0)), static_cast<hsize_t>(A.extent(1)), static_cast<hsize_t>(A.extent(2))};
-    if (rank == 3 && dims[0] == count[0] && dims[1] == count[1] && dims[2] == count[2]) {
+    bool dedalus_style = is_dedalus_task_dataset(file_id, dset_id, spec);
+    if (spec.has_component_index && dedalus_style && rank == 5 && dims[1] > static_cast<hsize_t>(spec.component_index) &&
+        dims[2] >= count[0] && dims[3] >= count[1] && dims[4] >= count[2]) {
+        hsize_t start[5] = {0, static_cast<hsize_t>(spec.component_index), 0, 0, 0};
+        hsize_t dedalus_count[5] = {1, 1, count[0], count[1], count[2]};
+        H5Sselect_hyperslab(space_id, H5S_SELECT_SET, start, NULL, dedalus_count, NULL);
+        hid_t mem_space = H5Screate_simple(5, dedalus_count, NULL);
+        H5Dread(dset_id, H5T_NATIVE_DOUBLE, mem_space, space_id, H5P_DEFAULT, A.data());
+        H5Sclose(mem_space);
+    } else if (!spec.has_component_index && dedalus_style && rank == 4 &&
+        dims[1] >= count[0] && dims[2] >= count[1] && dims[3] >= count[2]) {
+        hsize_t start[4] = {0, 0, 0, 0};
+        hsize_t dedalus_count[4] = {1, count[0], count[1], count[2]};
+        H5Sselect_hyperslab(space_id, H5S_SELECT_SET, start, NULL, dedalus_count, NULL);
+        hid_t mem_space = H5Screate_simple(4, dedalus_count, NULL);
+        H5Dread(dset_id, H5T_NATIVE_DOUBLE, mem_space, space_id, H5P_DEFAULT, A.data());
+        H5Sclose(mem_space);
+    } else if (rank == 3 && dims[0] == count[0] && dims[1] == count[1] && dims[2] == count[2]) {
         H5Dread(dset_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, A.data());
     } else if (rank == 3 && dims[0] >= count[0] && dims[1] >= count[1] && dims[2] >= count[2]) {
         hsize_t start[3] = {0, 0, 0};

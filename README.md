@@ -284,6 +284,8 @@ In this case, the number of processors in the x-direction and the longitudinal s
 
 `mpirun -np [N] src/fastSF.out -U [FileName]`
 
+`fastSF` also auto-detects Dedalus single-file velocity outputs when the file contains `/tasks/u` with component and coordinate scales attached. In that case, the same one-argument form works and `fastSF` reads the three velocity components from that task automatically.
+
 Similarly for scalar fields in TPP format (expected dataset `fields/temp`):
 
 `mpirun -np [N] src/fastSF.out -s true -Q [FileName]`

@@ -51,7 +51,6 @@ USE_NATIVE_ARCH ?= 1
 # preserve the same floating-point contraction behavior as the baseline build.
 NATIVE_ARCH_FLAGS ?= -march=native -mtune=native -ffp-contract=off
 CPPFLAGS += -I.
-CPPFLAGS += $(shell $(PKG_CONFIG) --cflags $(PKG_PACKAGES) 2>/dev/null)
 LDLIBS += $(shell $(PKG_CONFIG) --libs $(PKG_PACKAGES) 2>/dev/null)
 CXXFLAGS ?= -std=c++11 -O3 -DH5SI_ENABLE_MPI -DH5SI_ENABLE_MPI
 ifeq ($(USE_NATIVE_ARCH),1)
@@ -70,6 +69,8 @@ CPPFLAGS += -I$(HDF5_ROOT)/include
 LDFLAGS += -L$(HDF5_ROOT)/lib
 RPATH_DIRS += $(HDF5_ROOT)/lib
 endif
+
+CPPFLAGS += $(shell $(PKG_CONFIG) --cflags $(PKG_PACKAGES) 2>/dev/null)
 
 RPATH_FLAGS := $(foreach dir,$(sort $(RPATH_DIRS)),-Wl,-rpath,$(dir))
 LDLIBS += -lh5si -lhdf5
